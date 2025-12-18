@@ -1,0 +1,64 @@
+<tr id="word-{{ word.id }}" class="word-row editing">
+    <td colspan="6">
+        <form hx-put="/vocabulary/{{ word.id }}"
+              hx-target="#word-{{ word.id }}"
+              hx-swap="outerHTML">
+            <div class="edit-form">
+                <div class="edit-header">
+                    <strong>{{ word.lemma }}</strong> ({{ word.pos }})
+                </div>
+
+                <div class="edit-fields">
+                    {% if word.pos == 'NOUN' %}
+                    <label>
+                        Gender
+                        <select name="gender">
+                            <option value="">-</option>
+                            <option value="der" {% if word.gender == 'der' %}selected{% endif %}>der</option>
+                            <option value="die" {% if word.gender == 'die' %}selected{% endif %}>die</option>
+                            <option value="das" {% if word.gender == 'das' %}selected{% endif %}>das</option>
+                        </select>
+                    </label>
+                    <label>
+                        Plural
+                        <input type="text" name="plural" value="{{ word.plural or '' }}">
+                    </label>
+                    {% elif word.pos == 'VERB' %}
+                    <label>
+                        Preterite
+                        <input type="text" name="preterite" value="{{ word.preterite or '' }}">
+                    </label>
+                    <label>
+                        Past Participle
+                        <input type="text" name="past_participle" value="{{ word.past_participle or '' }}">
+                    </label>
+                    <label>
+                        Auxiliary
+                        <select name="auxiliary">
+                            <option value="">-</option>
+                            <option value="haben" {% if word.auxiliary == 'haben' %}selected{% endif %}>haben</option>
+                            <option value="sein" {% if word.auxiliary == 'sein' %}selected{% endif %}>sein</option>
+                        </select>
+                    </label>
+                    {% endif %}
+
+                    <label class="full-width">
+                        Translations (comma-separated)
+                        <input type="text" name="translations" value="{{ word.translations_list | join(', ') }}">
+                    </label>
+                </div>
+
+                <div class="edit-actions">
+                    <button type="submit">Save</button>
+                    <button type="button" class="outline"
+                            hx-get="/vocabulary"
+                            hx-target="#word-{{ word.id }}"
+                            hx-swap="outerHTML"
+                            hx-select="#word-{{ word.id }}">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </form>
+    </td>
+</tr>
