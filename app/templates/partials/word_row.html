@@ -1,0 +1,19 @@
+<tr id="word-{{ word.id }}" class="word-row">
+    <td><strong>{{ word.display_word }}</strong></td>
+    <td><span class="pos-tag">{{ word.pos }}</span></td>
+    <td>{{ word.translations_list | join(', ') }}</td>
+    <td class="grammar-cell">{{ word.grammar_info }}</td>
+    <td>
+        {% if word.is_synced %}
+        <span class="status-badge synced" title="Note ID: {{ word.anki_note_id }}">Synced</span>
+        {% else %}
+        <span class="status-badge unsynced">Not synced</span>
+        {% endif %}
+    </td>
+    <td class="actions-cell">
+        <button class="small secondary outline"
+                hx-get="/vocabulary/{{ word.id }}/edit"
+                hx-target="#word-{{ word.id }}"
+                hx-swap="outerHTML">Edit</button>
+    </td>
+</tr>

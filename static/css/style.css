@@ -1,0 +1,239 @@
+/* VocabExt Custom Styles */
+
+/* Status badges */
+.status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.status-badge.processing {
+    background-color: #fef3cd;
+    color: #856404;
+}
+
+.status-badge.pending {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.status-badge.accepted,
+.status-badge.synced,
+.status-badge.reviewed {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.status-badge.rejected {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.status-badge.duplicate {
+    background-color: #e2e3e5;
+    color: #383d41;
+}
+
+.status-badge.unsynced {
+    background-color: #d1ecf1;
+    color: #0c5460;
+}
+
+.status-badge.error {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+/* POS tags */
+.pos-tag {
+    display: inline-block;
+    padding: 0.15rem 0.4rem;
+    background-color: #e9ecef;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-family: monospace;
+}
+
+/* Actions bar */
+.actions-bar {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.actions-bar label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+}
+
+.actions-bar input[type="checkbox"] {
+    margin: 0;
+}
+
+/* Search form */
+.search-form {
+    flex: 1;
+    margin: 0;
+}
+
+.search-form fieldset {
+    margin: 0;
+}
+
+/* Tables */
+.extractions-table,
+.vocabulary-table {
+    font-size: 0.9rem;
+}
+
+.extractions-table td,
+.vocabulary-table td {
+    vertical-align: middle;
+}
+
+.context-cell {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.85rem;
+    color: #666;
+}
+
+.grammar-cell {
+    font-size: 0.85rem;
+    color: #555;
+}
+
+.actions-cell {
+    white-space: nowrap;
+}
+
+/* Button sizes */
+button.small {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+}
+
+/* Row status styling */
+.extraction-row.status-accepted {
+    opacity: 0.7;
+}
+
+.extraction-row.status-rejected {
+    opacity: 0.5;
+    text-decoration: line-through;
+}
+
+.extraction-row.status-duplicate {
+    opacity: 0.6;
+    background-color: #f8f9fa;
+}
+
+/* Edit form */
+.edit-form {
+    padding: 1rem;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+}
+
+.edit-header {
+    margin-bottom: 1rem;
+}
+
+.edit-header .context-preview {
+    display: block;
+    font-size: 0.85rem;
+    color: #666;
+    font-style: italic;
+}
+
+.edit-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.edit-fields label {
+    margin: 0;
+}
+
+.edit-fields .full-width {
+    grid-column: 1 / -1;
+}
+
+.edit-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.edit-actions button {
+    margin: 0;
+}
+
+/* Alert messages */
+.alert {
+    padding: 1rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+}
+
+.alert-success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.alert-warning {
+    background-color: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeeba;
+}
+
+.alert-error {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+/* Word row styling */
+.word-row.editing {
+    background-color: #fff;
+}
+
+/* Footer */
+footer {
+    margin-top: 3rem;
+    padding: 1rem 0;
+    border-top: 1px solid #e9ecef;
+    text-align: center;
+}
+
+/* Navigation improvements */
+nav {
+    margin-bottom: 2rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .context-cell {
+        max-width: 150px;
+    }
+
+    .edit-fields {
+        grid-template-columns: 1fr;
+    }
+
+    .actions-bar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}

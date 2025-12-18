@@ -1,0 +1,34 @@
+<tr id="extraction-{{ extraction.id }}" class="extraction-row status-{{ extraction.status }}">
+    <td><strong>{{ extraction.display_word }}</strong></td>
+    <td><span class="pos-tag">{{ extraction.pos }}</span></td>
+    <td>{{ extraction.translations_list | join(', ') }}</td>
+    <td class="grammar-cell">{{ extraction.grammar_info }}</td>
+    <td class="context-cell">{{ extraction.context_sentence }}</td>
+    <td>
+        {% if extraction.status == 'pending' %}
+        <span class="status-badge pending">Pending</span>
+        {% elif extraction.status == 'accepted' %}
+        <span class="status-badge accepted">Accepted</span>
+        {% elif extraction.status == 'rejected' %}
+        <span class="status-badge rejected">Rejected</span>
+        {% elif extraction.status == 'duplicate' %}
+        <span class="status-badge duplicate">Known</span>
+        {% endif %}
+    </td>
+    <td class="actions-cell">
+        {% if extraction.status == 'pending' %}
+        <button class="small"
+                hx-patch="/extractions/{{ extraction.id }}/accept"
+                hx-target="#extraction-{{ extraction.id }}"
+                hx-swap="outerHTML">Accept</button>
+        <button class="small outline"
+                hx-patch="/extractions/{{ extraction.id }}/reject"
+                hx-target="#extraction-{{ extraction.id }}"
+                hx-swap="outerHTML">Reject</button>
+        <button class="small secondary outline"
+                hx-get="/extractions/{{ extraction.id }}/edit"
+                hx-target="#extraction-{{ extraction.id }}"
+                hx-swap="outerHTML">Edit</button>
+        {% endif %}
+    </td>
+</tr>

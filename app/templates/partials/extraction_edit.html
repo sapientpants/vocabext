@@ -1,0 +1,65 @@
+<tr id="extraction-{{ extraction.id }}" class="extraction-row editing">
+    <td colspan="7">
+        <form hx-put="/extractions/{{ extraction.id }}"
+              hx-target="#extraction-{{ extraction.id }}"
+              hx-swap="outerHTML">
+            <div class="edit-form">
+                <div class="edit-header">
+                    <strong>{{ extraction.lemma }}</strong> ({{ extraction.pos }})
+                    <span class="context-preview">{{ extraction.context_sentence[:50] }}...</span>
+                </div>
+
+                <div class="edit-fields">
+                    {% if extraction.pos == 'NOUN' %}
+                    <label>
+                        Gender
+                        <select name="gender">
+                            <option value="">-</option>
+                            <option value="der" {% if extraction.gender == 'der' %}selected{% endif %}>der</option>
+                            <option value="die" {% if extraction.gender == 'die' %}selected{% endif %}>die</option>
+                            <option value="das" {% if extraction.gender == 'das' %}selected{% endif %}>das</option>
+                        </select>
+                    </label>
+                    <label>
+                        Plural
+                        <input type="text" name="plural" value="{{ extraction.plural or '' }}">
+                    </label>
+                    {% elif extraction.pos == 'VERB' %}
+                    <label>
+                        Preterite
+                        <input type="text" name="preterite" value="{{ extraction.preterite or '' }}">
+                    </label>
+                    <label>
+                        Past Participle
+                        <input type="text" name="past_participle" value="{{ extraction.past_participle or '' }}">
+                    </label>
+                    <label>
+                        Auxiliary
+                        <select name="auxiliary">
+                            <option value="">-</option>
+                            <option value="haben" {% if extraction.auxiliary == 'haben' %}selected{% endif %}>haben</option>
+                            <option value="sein" {% if extraction.auxiliary == 'sein' %}selected{% endif %}>sein</option>
+                        </select>
+                    </label>
+                    {% endif %}
+
+                    <label class="full-width">
+                        Translations (comma-separated)
+                        <input type="text" name="translations" value="{{ extraction.translations_list | join(', ') }}">
+                    </label>
+                </div>
+
+                <div class="edit-actions">
+                    <button type="submit">Save</button>
+                    <button type="button" class="outline"
+                            hx-get="/extractions/{{ extraction.id }}/edit"
+                            hx-target="#extraction-{{ extraction.id }}"
+                            hx-swap="outerHTML"
+                            onclick="htmx.ajax('GET', '/documents/{{ extraction.document_id }}', {target: '#extraction-{{ extraction.id }}', swap: 'outerHTML', select: '#extraction-{{ extraction.id }}'})">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </form>
+    </td>
+</tr>

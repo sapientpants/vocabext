@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}Vocabulary - VocabExt{% endblock %}
+
+{% block content %}
+<hgroup>
+    <h1>Vocabulary</h1>
+    <p>{{ total_count }} words | {{ synced_count }} synced to Anki</p>
+</hgroup>
+
+<div class="actions-bar">
+    <form method="get" action="/vocabulary" class="search-form">
+        <fieldset role="group">
+            <input type="text" name="search" placeholder="Search by lemma..." value="{{ search }}">
+            <select name="pos">
+                <option value="">All POS</option>
+                {% for p in pos_values %}
+                <option value="{{ p }}" {% if p == pos %}selected{% endif %}>{{ p }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit">Filter</button>
+        </fieldset>
+    </form>
+
+    <button hx-post="/sync"
+            hx-target="#sync-status"
+            hx-swap="innerHTML"
+            hx-indicator="#sync-spinner"
+            hx-disabled-elt="this">
+        Sync to Anki
+    </button>
+    <span id="sync-spinner" class="htmx-indicator" aria-busy="true" style="margin-left: 0.5rem;">Syncing...</span>
+</div>
+
+<div id="sync-status"></div>
+
+{% if words %}
+<table class="vocabulary-table">
+    <thead>
+        <tr>
+            <th>Word</th>
+            <th>POS</th>
+            <th>Translations</th>
+            <th>Grammar</th>
+            <th>Anki</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for word in words %}
+        {% include "partials/word_row.html" %}
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No vocabulary words found. Upload and review documents to build your vocabulary.</p>
+{% endif %}
+{% endblock %}

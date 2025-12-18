@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}Review: {{ document.filename }} - VocabExt{% endblock %}
+
+{% block content %}
+<hgroup>
+    <h1>Review: {{ document.filename }}</h1>
+    <p>
+        Status: {{ document.status }} |
+        {{ document.pending_count }} pending |
+        {{ document.duplicate_count }} duplicates
+    </p>
+</hgroup>
+
+{% if document.status == 'processing' %}
+<p aria-busy="true" hx-get="/documents/{{ document.id }}" hx-trigger="every 3s" hx-target="body" hx-swap="innerHTML">
+    Processing document... Please wait.
+</p>
+{% elif document.status == 'error' %}
+<article>
+    <p><strong>Error:</strong> {{ document.error_message }}</p>
+    <form action="/documents/{{ document.id }}/reprocess" method="post">
+        <button type="submit">Retry Processing</button>
+    </form>
+</article>
+{% else %}
+
+<div class="actions-bar">
+    {% if document.pending_count > 0 %}
+    <button type="button" class="contrast"
+            hx-patch="/documents/{{ document.id }}/accept-all"
+            hx-target="body"
+            hx-swap="innerHTML">Accept All ({{ document.pending_count }})</button>
+    <button type="button" class="secondary"
+            hx-patch="/documents/{{ document.id }}/reject-all"
+            hx-target="body"
+            hx-swap="innerHTML"
+            hx-confirm="Reject all {{ document.pending_count }} pending extractions?">Reject All</button>
+    {% endif %}
+
+    <label>
+        <input type="checkbox"
+               {% if show_duplicates %}checked{% endif %}
+               hx-get="/documents/{{ document.id }}?show_duplicates={{ 'false' if show_duplicates else 'true' }}"
+               hx-target="body"
+               hx-swap="innerHTML">
+        Show duplicates
+    </label>
+</div>
+
+{% if extractions %}
+<table class="extractions-table">
+    <thead>
+        <tr>
+            <th>Word</th>
+            <th>POS</th>
+            <th>Translations</th>
+            <th>Grammar</th>
+            <th>Context</th>
+            <th>Status</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for extraction in extractions %}
+        {% include "partials/extraction_row.html" %}
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No extractions to review.</p>
+{% endif %}
+
+{% endif %}
+
+<p>
+    <a href="/documents">&larr; Back to Documents</a>
+    <button type="button" class="outline secondary" style="margin-left: 1rem;"
+            hx-delete="/documents/{{ document.id }}"
+            hx-confirm="Delete this document and all its extractions?"
+            hx-on::after-request="if(event.detail.successful) window.location.href='/documents'">Delete Document</button>
+</p>
+{% endblock %}
