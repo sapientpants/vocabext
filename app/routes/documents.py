@@ -156,7 +156,7 @@ async def accept_all_pending(
     session: AsyncSession = Depends(get_session),
 ):
     """Accept all pending extractions for a document."""
-    from app.routes.extractions import _accept_extraction
+    from app.routes.extractions import _accept_extraction, update_document_status
 
     stmt = select(Extraction).where(
         Extraction.document_id == document_id,
@@ -167,6 +167,9 @@ async def accept_all_pending(
 
     for extraction in extractions:
         await _accept_extraction(extraction, session)
+
+    # Update document status if all reviewed
+    await update_document_status(document_id, session)
 
     # Re-fetch document with updated extractions
     stmt = (
@@ -198,6 +201,8 @@ async def reject_all_pending(
     session: AsyncSession = Depends(get_session),
 ):
     """Reject all pending extractions for a document."""
+    from app.routes.extractions import update_document_status
+
     stmt = select(Extraction).where(
         Extraction.document_id == document_id,
         Extraction.status == "pending",
@@ -209,6 +214,9 @@ async def reject_all_pending(
         extraction.status = "rejected"
 
     await session.commit()
+
+    # Update document status if all reviewed
+    await update_document_status(document_id, session)
 
     # Re-fetch document with updated extractions
     stmt = (
