@@ -10,9 +10,31 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
-from app.models import Extraction, Word
+from app.models import Document, Extraction, Word
 
 logger = logging.getLogger(__name__)
+
+
+async def update_document_status(document_id: int, session: AsyncSession) -> None:
+    """Update document status based on extraction states."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    stmt = (
+        select(Document)
+        .options(selectinload(Document.extractions))
+        .where(Document.id == document_id)
+    )
+    result = await session.execute(stmt)
+    document = result.scalar_one_or_none()
+
+    if not document:
+        return
+
+    # If no pending extractions remain, mark as reviewed
+    if document.pending_count == 0 and document.status == "pending_review":
+        document.status = "reviewed"
+        await session.commit()
 
 router = APIRouter(prefix="/extractions", tags=["extractions"])
 
@@ -74,7 +96,9 @@ async def accept_extraction(
     if extraction.status != "pending":
         raise HTTPException(status_code=400, detail="Extraction already processed")
 
+    document_id = extraction.document_id
     await _accept_extraction(extraction, session)
+    await update_document_status(document_id, session)
 
     return request.app.state.templates.TemplateResponse(
         "partials/extraction_row.html",
@@ -96,8 +120,10 @@ async def reject_extraction(
     if extraction.status != "pending":
         raise HTTPException(status_code=400, detail="Extraction already processed")
 
+    document_id = extraction.document_id
     extraction.status = "rejected"
     await session.commit()
+    await update_document_status(document_id, session)
 
     return request.app.state.templates.TemplateResponse(
         "partials/extraction_row.html",
