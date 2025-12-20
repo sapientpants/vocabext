@@ -1,6 +1,8 @@
 """Text extraction service for various document formats."""
 
+import asyncio
 import logging
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -37,33 +39,45 @@ class TextExtractor:
     async def _extract_text(self, file_path: Path) -> str:
         """Extract text from plain text or markdown files."""
         logger.info(f"Extracting text from {file_path}")
-        return file_path.read_text(encoding="utf-8")
+        # Run file I/O in thread executor to avoid blocking
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, partial(file_path.read_text, encoding="utf-8"))
 
     async def _extract_pdf(self, file_path: Path) -> str:
         """Extract text from PDF files using pdfplumber."""
+        logger.info(f"Extracting text from PDF {file_path}")
+        # Run blocking PDF extraction in thread executor
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._extract_pdf_sync, file_path)
+
+    def _extract_pdf_sync(self, file_path: Path) -> str:
+        """Synchronous PDF extraction for use in executor."""
         import pdfplumber
 
-        logger.info(f"Extracting text from PDF {file_path}")
-        text_parts = []
-
+        text_parts: list[str] = []
         with pdfplumber.open(file_path) as pdf:
             for page in pdf.pages:
                 page_text = page.extract_text()
                 if page_text:
                     text_parts.append(page_text)
-
         return "\n\n".join(text_parts)
 
     async def _extract_pptx(self, file_path: Path) -> str:
         """Extract text from PowerPoint files including speaker notes."""
+        logger.info(f"Extracting text from PPTX {file_path}")
+        # Run blocking PPTX extraction in thread executor
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._extract_pptx_sync, file_path)
+
+    def _extract_pptx_sync(self, file_path: Path) -> str:
+        """Synchronous PPTX extraction for use in executor."""
         from pptx import Presentation
 
-        logger.info(f"Extracting text from PPTX {file_path}")
-        text_parts = []
-
+        text_parts: list[str] = []
         prs = Presentation(file_path)
+
         for slide_num, slide in enumerate(prs.slides, 1):
-            slide_text = []
+            slide_text: list[str] = []
 
             # Extract text from shapes
             for shape in slide.shapes:
@@ -83,9 +97,14 @@ class TextExtractor:
 
     async def _extract_audio(self, file_path: Path) -> str:
         """Transcribe audio files using Whisper."""
-        import whisper
-
         logger.info(f"Transcribing audio {file_path} with Whisper {self.whisper_model}")
+        # Run CPU-intensive Whisper transcription in thread executor
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._transcribe_audio_sync, file_path)
+
+    def _transcribe_audio_sync(self, file_path: Path) -> str:
+        """Synchronous audio transcription for use in executor."""
+        import whisper
 
         # Load model lazily
         if self._whisper is None:

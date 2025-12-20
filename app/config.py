@@ -40,5 +40,8 @@ class Settings(BaseSettings):
     # Whisper
     whisper_model: str = "large"
 
+    # Upload limits
+    max_upload_size_mb: int = 100  # Maximum upload size in MB
+
 
 settings = Settings()

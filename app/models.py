@@ -1,13 +1,18 @@
 """SQLAlchemy ORM models."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional, cast
 
-from sqlalchemy import ForeignKey, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+
+def _utc_now() -> datetime:
+    """Return current UTC time (replaces deprecated datetime.utcnow())."""
+    return datetime.now(timezone.utc)
 
 
 class Document(Base):
@@ -23,7 +28,7 @@ class Document(Base):
     )  # processing, pending_review, reviewed, error
     raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_utc_now)
 
     # Relationships
     extractions: Mapped[list["Extraction"]] = relationship(
@@ -46,11 +51,17 @@ class Word(Base):
     """Accepted vocabulary word in the user's collection."""
 
     __tablename__ = "words"
-    __table_args__ = (UniqueConstraint("lemma", "pos", "gender", name="uq_word_identity"),)
+    __table_args__ = (
+        UniqueConstraint("lemma", "pos", "gender", name="uq_word_identity"),
+        # Composite index for word lookups by lemma and pos
+        Index("ix_words_lemma_pos", "lemma", "pos"),
+        # Index for sync status queries
+        Index("ix_words_anki_note_id", "anki_note_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     lemma: Mapped[str] = mapped_column(Text, index=True)
-    pos: Mapped[str] = mapped_column(Text)  # NOUN, VERB, ADJ, ADV, ADP
+    pos: Mapped[str] = mapped_column(Text, index=True)  # NOUN, VERB, ADJ, ADV, ADP
     gender: Mapped[str | None] = mapped_column(Text, nullable=True)  # der/die/das (nouns only)
     plural: Mapped[str | None] = mapped_column(Text, nullable=True)  # nouns only
     preterite: Mapped[str | None] = mapped_column(Text, nullable=True)  # verbs only
@@ -59,7 +70,7 @@ class Word(Base):
     translations: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
     anki_note_id: Mapped[int | None] = mapped_column(nullable=True)
     anki_synced_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_utc_now)
 
     # Relationships
     extractions: Mapped[list["Extraction"]] = relationship(back_populates="word")
@@ -110,9 +121,15 @@ class Extraction(Base):
     """Word extraction from a document, pending review."""
 
     __tablename__ = "extractions"
+    __table_args__ = (
+        # Composite index for document extraction queries
+        Index("ix_extractions_document_status", "document_id", "status"),
+        # Index for word lookups
+        Index("ix_extractions_word_id", "word_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"))
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), index=True)
     word_id: Mapped[int | None] = mapped_column(ForeignKey("words.id"), nullable=True)
     surface_form: Mapped[str] = mapped_column(Text)
     lemma: Mapped[str] = mapped_column(Text)
@@ -125,9 +142,9 @@ class Extraction(Base):
     translations: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
     context_sentence: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
-        Text, default="pending"
+        Text, default="pending", index=True
     )  # pending, accepted, rejected, duplicate
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_utc_now)
 
     # Relationships
     document: Mapped["Document"] = relationship(back_populates="extractions")
