@@ -57,7 +57,7 @@
                         hx-delete="/documents/{{ doc.id }}"
                         hx-confirm="Delete this document and all its extractions?"
                         hx-target="closest tr"
-                        hx-swap="outerHTML swap:1s">Delete</button>
+                        hx-swap="delete swap:0.5s">Delete</button>
             </td>
         </tr>
         {% endfor %}
