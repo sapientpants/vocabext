@@ -1,13 +1,12 @@
 """Anki sync routes."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.database import get_session
 from app.models import Word
@@ -33,7 +32,7 @@ async def sync_all(
                 Anki is not running or AnkiConnect is not installed.
                 Please start Anki and try again.
             </div>""",
-            status_code=200,
+            status_code=503,  # Service Unavailable
         )
 
     # Ensure deck and note type exist
@@ -43,12 +42,12 @@ async def sync_all(
     except Exception as e:
         logger.error(f"Failed to setup Anki: {e}")
         return HTMLResponse(
-            content=f'<div class="alert alert-error">Failed to setup Anki: {e}</div>',
-            status_code=200,
+            content='<div class="alert alert-error">Failed to setup Anki. Check logs.</div>',
+            status_code=500,  # Internal Server Error
         )
 
-    # Get all words for syncing
-    stmt = select(Word).options(selectinload(Word.extractions))
+    # Get all words for syncing (don't need extractions for sync)
+    stmt = select(Word)
     result = await session.execute(stmt)
     words = result.scalars().all()
 
@@ -59,7 +58,7 @@ async def sync_all(
         note_id = await anki.sync_word(word)
         if note_id:
             word.anki_note_id = note_id
-            word.anki_synced_at = datetime.utcnow()
+            word.anki_synced_at = datetime.now(timezone.utc)
             synced += 1
         else:
             failed += 1
@@ -71,7 +70,7 @@ async def sync_all(
             content=f"""<div class="alert alert-warning">
                 Synced {synced} words to Anki. {failed} failed.
             </div>""",
-            status_code=200,
+            status_code=207,  # Multi-Status for partial success
         )
 
     return HTMLResponse(
@@ -90,14 +89,14 @@ async def sync_status(
     anki = AnkiService()
     anki_stats = await anki.get_sync_stats()
 
-    # Count words
-    total_stmt = select(Word)
-    result = await session.execute(total_stmt)
-    total = len(result.scalars().all())
+    # Count words efficiently using database-level counting
+    total_result = await session.execute(select(func.count(Word.id)))
+    total: int = total_result.scalar() or 0
 
-    synced_stmt = select(Word).where(Word.anki_note_id.isnot(None))
-    result = await session.execute(synced_stmt)
-    synced = len(result.scalars().all())
+    synced_result = await session.execute(
+        select(func.count(Word.id)).where(Word.anki_note_id.isnot(None))
+    )
+    synced: int = synced_result.scalar() or 0
 
     return {
         "anki": anki_stats,

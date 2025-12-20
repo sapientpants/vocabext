@@ -6,6 +6,7 @@ import logging
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -39,6 +40,58 @@ async def update_document_status(document_id: int, session: AsyncSession) -> Non
 router = APIRouter(prefix="/extractions", tags=["extractions"])
 
 
+async def _find_or_create_word(extraction: Extraction, session: AsyncSession) -> Word:
+    """
+    Find an existing word or create a new one.
+
+    Handles race conditions by catching IntegrityError and retrying the lookup.
+    """
+    # Build query for existing word (same lemma+pos+gender)
+    stmt = select(Word).where(
+        Word.lemma == extraction.lemma,
+        Word.pos == extraction.pos,
+    )
+    # Handle NULL gender properly with is_ for NULL comparison
+    if extraction.gender:
+        stmt = stmt.where(Word.gender == extraction.gender)
+    else:
+        stmt = stmt.where(Word.gender.is_(None))
+
+    result = await session.execute(stmt)
+    existing_word: Word | None = result.scalar_one_or_none()
+
+    if existing_word is not None:
+        return existing_word
+
+    # Try to create new word, handling race condition
+    new_word = Word(
+        lemma=extraction.lemma,
+        pos=extraction.pos,
+        gender=extraction.gender,
+        plural=extraction.plural,
+        preterite=extraction.preterite,
+        past_participle=extraction.past_participle,
+        auxiliary=extraction.auxiliary,
+        translations=extraction.translations,
+    )
+    session.add(new_word)
+
+    try:
+        await session.flush()
+        return new_word
+    except IntegrityError:
+        # Another request created the word concurrently, rollback and fetch it
+        await session.rollback()
+        result = await session.execute(stmt)
+        found_word: Word | None = result.scalar_one_or_none()
+        if found_word is None:
+            # Should not happen, but handle gracefully
+            raise ValueError(
+                f"Failed to find or create word: {extraction.lemma}/{extraction.pos}"
+            ) from None
+        return found_word
+
+
 async def _accept_extraction(extraction: Extraction, session: AsyncSession) -> Word:
     """
     Accept an extraction and create/link a Word.
@@ -48,34 +101,7 @@ async def _accept_extraction(extraction: Extraction, session: AsyncSession) -> W
     if extraction.status not in ("pending",):
         raise ValueError(f"Cannot accept extraction with status: {extraction.status}")
 
-    # Check if word already exists (same lemma+pos+gender)
-    stmt = select(Word).where(
-        Word.lemma == extraction.lemma,
-        Word.pos == extraction.pos,
-    )
-    if extraction.gender:
-        stmt = stmt.where(Word.gender == extraction.gender)
-
-    result = await session.execute(stmt)
-    existing_word: Word | None = result.scalar_one_or_none()
-
-    if existing_word is None:
-        # Create new word
-        new_word = Word(
-            lemma=extraction.lemma,
-            pos=extraction.pos,
-            gender=extraction.gender,
-            plural=extraction.plural,
-            preterite=extraction.preterite,
-            past_participle=extraction.past_participle,
-            auxiliary=extraction.auxiliary,
-            translations=extraction.translations,
-        )
-        session.add(new_word)
-        await session.flush()
-        word: Word = new_word
-    else:
-        word = existing_word
+    word = await _find_or_create_word(extraction, session)
 
     # Link extraction to word
     extraction.word_id = word.id
