@@ -1,9 +1,7 @@
 """AnkiConnect service for syncing vocabulary to Anki."""
 
-import json
 import logging
-from datetime import datetime
-from typing import Optional
+from typing import Any
 
 import httpx
 
@@ -18,15 +16,15 @@ class AnkiService:
 
     def __init__(
         self,
-        url: str = None,
-        deck: str = None,
-        note_type: str = None,
-    ):
+        url: str | None = None,
+        deck: str | None = None,
+        note_type: str | None = None,
+    ) -> None:
         self.url = url or settings.anki_connect_url
         self.deck = deck or settings.anki_deck
         self.note_type = note_type or settings.anki_note_type
 
-    async def _invoke(self, action: str, **params) -> dict:
+    async def _invoke(self, action: str, **params: Any) -> Any:
         """Invoke an AnkiConnect action."""
         payload = {
             "action": action,
@@ -64,7 +62,9 @@ class AnkiService:
                 field_names = await self._invoke("modelFieldNames", modelName=self.note_type)
                 if "Context" in field_names:
                     logger.info(f"Removing Context field from '{self.note_type}'")
-                    await self._invoke("modelFieldRemove", modelName=self.note_type, fieldName="Context")
+                    await self._invoke(
+                        "modelFieldRemove", modelName=self.note_type, fieldName="Context"
+                    )
             except Exception as e:
                 logger.warning(f"Could not check/remove Context field: {e}")
             return
@@ -125,7 +125,7 @@ class AnkiService:
             "tags": [f"pos:{word.pos.lower()}", "vocabext"],
         }
 
-        note_id = await self._invoke("addNote", note=note)
+        note_id: int = await self._invoke("addNote", note=note)
         logger.info(f"Added note {note_id} for word '{word.lemma}'")
         return note_id
 
@@ -149,11 +149,11 @@ class AnkiService:
         )
         logger.info(f"Updated note {word.anki_note_id} for word '{word.lemma}'")
 
-    async def find_existing_note(self, word: Word) -> Optional[int]:
+    async def find_existing_note(self, word: Word) -> int | None:
         """Find an existing note in Anki for this word."""
         # Search by the Front field (display_word) in our note type
         query = f'"note:{self.note_type}" "Front:{word.display_word}"'
-        note_ids = await self._invoke("findNotes", query=query)
+        note_ids: list[int] = await self._invoke("findNotes", query=query)
 
         if note_ids:
             return note_ids[0]
@@ -167,7 +167,7 @@ class AnkiService:
         except Exception:
             return False
 
-    async def sync_word(self, word: Word) -> Optional[int]:
+    async def sync_word(self, word: Word) -> int | None:
         """
         Sync a word to Anki (create or update).
 
@@ -178,7 +178,7 @@ class AnkiService:
             if word.anki_note_id:
                 if await self.note_exists(word.anki_note_id):
                     await self.update_note(word)
-                    return word.anki_note_id
+                    return int(word.anki_note_id)
                 # Note was deleted from Anki, clear our reference
                 logger.info(f"Note {word.anki_note_id} no longer exists for '{word.lemma}'")
 
@@ -197,7 +197,7 @@ class AnkiService:
             logger.error(f"Failed to sync word '{word.lemma}': {e}")
             return None
 
-    async def get_sync_stats(self) -> dict:
+    async def get_sync_stats(self) -> dict[str, Any]:
         """Get sync statistics."""
         try:
             if not await self.is_available():

@@ -4,7 +4,6 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 import httpx
 
@@ -16,14 +15,15 @@ logger = logging.getLogger(__name__)
 @dataclass
 class EnrichmentResult:
     """Result of LLM enrichment for a word."""
-    gender: Optional[str] = None  # der/die/das
-    plural: Optional[str] = None
-    preterite: Optional[str] = None
-    past_participle: Optional[str] = None
-    auxiliary: Optional[str] = None  # haben/sein
-    translations: list[str] = None
 
-    def __post_init__(self):
+    gender: str | None = None  # der/die/das
+    plural: str | None = None
+    preterite: str | None = None
+    past_participle: str | None = None
+    auxiliary: str | None = None  # haben/sein
+    translations: list[str] | None = None
+
+    def __post_init__(self) -> None:
         if self.translations is None:
             self.translations = []
 
@@ -33,9 +33,9 @@ class Enricher:
 
     def __init__(
         self,
-        base_url: str = None,
-        model: str = None,
-    ):
+        base_url: str | None = None,
+        model: str | None = None,
+    ) -> None:
         self.base_url = base_url or settings.ollama_base_url
         self.model = model or settings.ollama_model
 
@@ -124,20 +124,16 @@ Example response:
     def _clean_json(self, json_str: str) -> str:
         """Clean LLM output to get valid JSON."""
         # Remove C-style comments
-        json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
-        json_str = re.sub(r'//.*?$', '', json_str, flags=re.MULTILINE)
+        json_str = re.sub(r"/\*.*?\*/", "", json_str, flags=re.DOTALL)
+        json_str = re.sub(r"//.*?$", "", json_str, flags=re.MULTILINE)
 
         # Remove trailing content after string values (e.g., "value" (extra stuff))
         # Match: "key": "value" followed by parenthetical or extra text before comma/brace
-        json_str = re.sub(
-            r'(":\s*"[^"]*")\s*\([^)]*\)',
-            r'\1',
-            json_str
-        )
+        json_str = re.sub(r'(":\s*"[^"]*")\s*\([^)]*\)', r"\1", json_str)
 
         # Remove trailing commas before closing braces
-        json_str = re.sub(r',\s*}', '}', json_str)
-        json_str = re.sub(r',\s*]', ']', json_str)
+        json_str = re.sub(r",\s*}", "}", json_str)
+        json_str = re.sub(r",\s*]", "]", json_str)
 
         return json_str.strip()
 

@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -26,7 +26,7 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 async def list_documents(
     request: Request,
     session: AsyncSession = Depends(get_session),
-):
+) -> Response:
     """List all documents."""
     stmt = (
         select(Document)
@@ -51,7 +51,7 @@ async def upload_document(
     request: Request,
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
-):
+) -> Response:
     """Upload and process a document."""
     # Validate file extension
     ext = Path(file.filename).suffix.lower()
@@ -116,7 +116,7 @@ async def review_document(
     document_id: int,
     show_duplicates: bool = False,
     session: AsyncSession = Depends(get_session),
-):
+) -> Response:
     """Review extractions for a document."""
     stmt = (
         select(Document)
@@ -154,7 +154,7 @@ async def accept_all_pending(
     request: Request,
     document_id: int,
     session: AsyncSession = Depends(get_session),
-):
+) -> Response:
     """Accept all pending extractions for a document."""
     from app.routes.extractions import _accept_extraction, update_document_status
 
@@ -199,7 +199,7 @@ async def reject_all_pending(
     request: Request,
     document_id: int,
     session: AsyncSession = Depends(get_session),
-):
+) -> Response:
     """Reject all pending extractions for a document."""
     from app.routes.extractions import update_document_status
 
@@ -245,7 +245,7 @@ async def reject_all_pending(
 async def document_status(
     document_id: int,
     session: AsyncSession = Depends(get_session),
-):
+) -> str:
     """Return just the status badge for htmx polling."""
     stmt = (
         select(Document)
@@ -259,12 +259,12 @@ async def document_status(
         return ""
 
     if document.status == "processing":
-        return f'''<span class="status-badge processing"
+        return f"""<span class="status-badge processing"
               hx-get="/documents/{document_id}/status"
               hx-trigger="every 3s"
               hx-swap="outerHTML">
             Processing...
-        </span>'''
+        </span>"""
     elif document.status == "pending_review":
         return '<span class="status-badge pending">Pending Review</span>'
     elif document.status == "reviewed":
@@ -278,7 +278,7 @@ async def document_status(
 async def reprocess_document(
     document_id: int,
     session: AsyncSession = Depends(get_session),
-):
+) -> Response:
     """Reprocess a failed document."""
     document = await session.get(Document, document_id)
     if not document:
@@ -302,7 +302,7 @@ async def reprocess_document(
 async def delete_document(
     document_id: int,
     session: AsyncSession = Depends(get_session),
-):
+) -> str:
     """Delete a document and its uploaded file."""
     document = await session.get(Document, document_id)
     if not document:

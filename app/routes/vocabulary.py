@@ -2,11 +2,10 @@
 
 import json
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
-from sqlalchemy import select, func
+from fastapi.responses import HTMLResponse, Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -23,7 +22,7 @@ async def list_vocabulary(
     search: str = Query("", description="Search by lemma"),
     pos: str = Query("", description="Filter by POS"),
     session: AsyncSession = Depends(get_session),
-):
+) -> Response:
     """List all vocabulary words with search and filter."""
     stmt = select(Word).order_by(Word.lemma)
 
@@ -69,7 +68,7 @@ async def edit_word_form(
     request: Request,
     word_id: int,
     session: AsyncSession = Depends(get_session),
-):
+) -> Response:
     """Get the edit form for a word."""
     word = await session.get(Word, word_id)
     if not word:
@@ -85,14 +84,14 @@ async def edit_word_form(
 async def update_word(
     request: Request,
     word_id: int,
-    gender: Optional[str] = Form(None),
-    plural: Optional[str] = Form(None),
-    preterite: Optional[str] = Form(None),
-    past_participle: Optional[str] = Form(None),
-    auxiliary: Optional[str] = Form(None),
+    gender: str | None = Form(None),
+    plural: str | None = Form(None),
+    preterite: str | None = Form(None),
+    past_participle: str | None = Form(None),
+    auxiliary: str | None = Form(None),
     translations: str = Form(""),
     session: AsyncSession = Depends(get_session),
-):
+) -> Response:
     """Update a word's metadata."""
     word = await session.get(Word, word_id)
     if not word:
