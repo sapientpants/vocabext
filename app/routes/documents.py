@@ -298,7 +298,7 @@ async def reprocess_document(
     )
 
 
-@router.delete("/{document_id}", status_code=204)
+@router.delete("/{document_id}", response_class=HTMLResponse)
 async def delete_document(
     document_id: int,
     session: AsyncSession = Depends(get_session),
@@ -316,3 +316,6 @@ async def delete_document(
     # Delete document (cascades to extractions)
     await session.delete(document)
     await session.commit()
+
+    # Return empty response for HTMX to swap out the row
+    return ""
