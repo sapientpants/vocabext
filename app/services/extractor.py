@@ -2,6 +2,7 @@
 
 import logging
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -14,9 +15,9 @@ class TextExtractor:
     SUPPORTED_PPTX = {".pptx"}
     SUPPORTED_AUDIO = {".mp3", ".wav", ".m4a"}
 
-    def __init__(self, whisper_model: str = "large"):
+    def __init__(self, whisper_model: str = "large") -> None:
         self.whisper_model = whisper_model
-        self._whisper = None
+        self._whisper: Any = None
 
     async def extract(self, file_path: Path) -> str:
         """Extract text from a file based on its extension."""
@@ -91,8 +92,9 @@ class TextExtractor:
             logger.info(f"Loading Whisper model: {self.whisper_model}")
             self._whisper = whisper.load_model(self.whisper_model)
 
-        result = self._whisper.transcribe(str(file_path), language="de")
-        return result["text"]
+        result: dict[str, Any] = self._whisper.transcribe(str(file_path), language="de")
+        text: str = result["text"]
+        return text
 
     @classmethod
     def supported_extensions(cls) -> set[str]:

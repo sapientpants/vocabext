@@ -2,17 +2,16 @@
 
 import json
 import logging
-from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import async_session
-from app.models import Document, Word, Extraction
+from app.models import Document, Extraction, Word
+from app.services.enricher import Enricher
 from app.services.extractor import TextExtractor
 from app.services.tokenizer import Tokenizer
-from app.services.enricher import Enricher
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +67,7 @@ async def process_document(document_id: int) -> None:
 
             for token in tokens:
                 # Check if word already exists in vocabulary
-                existing_word = await _find_existing_word(
-                    session, token.lemma, token.pos
-                )
+                existing_word = await _find_existing_word(session, token.lemma, token.pos)
 
                 if existing_word:
                     # Create duplicate extraction linked to existing word
@@ -133,13 +130,11 @@ async def process_document(document_id: int) -> None:
                     document.status = "error"
                     document.error_message = str(e)
                     await session.commit()
-            except Exception:
-                pass
+            except Exception as inner_e:
+                logger.error(f"Failed to update error status for document {document_id}: {inner_e}")
 
 
-async def _find_existing_word(
-    session: AsyncSession, lemma: str, pos: str
-) -> Word | None:
+async def _find_existing_word(session: AsyncSession, lemma: str, pos: str) -> Word | None:
     """
     Find an existing word in vocabulary.
 
@@ -148,4 +143,5 @@ async def _find_existing_word(
     """
     stmt = select(Word).where(Word.lemma == lemma, Word.pos == pos)
     result = await session.execute(stmt)
-    return result.scalar_one_or_none()
+    word: Word | None = result.scalar_one_or_none()
+    return word

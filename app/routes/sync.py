@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/sync", tags=["sync"])
 async def sync_all(
     request: Request,
     session: AsyncSession = Depends(get_session),
-):
+) -> Response:
     """Sync all unsynced words to Anki."""
     anki = AnkiService()
 
@@ -85,7 +85,7 @@ async def sync_all(
 @router.get("/status", response_class=JSONResponse)
 async def sync_status(
     session: AsyncSession = Depends(get_session),
-):
+) -> dict[str, object]:
     """Get sync status and stats."""
     anki = AnkiService()
     anki_stats = await anki.get_sync_stats()
