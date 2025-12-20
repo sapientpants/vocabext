@@ -2,10 +2,9 @@
 
 import json
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +35,7 @@ async def update_document_status(document_id: int, session: AsyncSession) -> Non
         document.status = "reviewed"
         await session.commit()
 
+
 router = APIRouter(prefix="/extractions", tags=["extractions"])
 
 
@@ -57,11 +57,11 @@ async def _accept_extraction(extraction: Extraction, session: AsyncSession) -> W
         stmt = stmt.where(Word.gender == extraction.gender)
 
     result = await session.execute(stmt)
-    word = result.scalar_one_or_none()
+    existing_word: Word | None = result.scalar_one_or_none()
 
-    if not word:
+    if existing_word is None:
         # Create new word
-        word = Word(
+        new_word = Word(
             lemma=extraction.lemma,
             pos=extraction.pos,
             gender=extraction.gender,
@@ -71,8 +71,11 @@ async def _accept_extraction(extraction: Extraction, session: AsyncSession) -> W
             auxiliary=extraction.auxiliary,
             translations=extraction.translations,
         )
-        session.add(word)
+        session.add(new_word)
         await session.flush()
+        word: Word = new_word
+    else:
+        word = existing_word
 
     # Link extraction to word
     extraction.word_id = word.id
@@ -87,7 +90,7 @@ async def accept_extraction(
     request: Request,
     extraction_id: int,
     session: AsyncSession = Depends(get_session),
-):
+) -> Response:
     """Accept an extraction, creating a vocabulary word."""
     extraction = await session.get(Extraction, extraction_id)
     if not extraction:
@@ -111,7 +114,7 @@ async def reject_extraction(
     request: Request,
     extraction_id: int,
     session: AsyncSession = Depends(get_session),
-):
+) -> Response:
     """Reject an extraction."""
     extraction = await session.get(Extraction, extraction_id)
     if not extraction:
@@ -136,7 +139,7 @@ async def edit_extraction_form(
     request: Request,
     extraction_id: int,
     session: AsyncSession = Depends(get_session),
-):
+) -> Response:
     """Get the edit form for an extraction."""
     extraction = await session.get(Extraction, extraction_id)
     if not extraction:
@@ -152,14 +155,14 @@ async def edit_extraction_form(
 async def update_extraction(
     request: Request,
     extraction_id: int,
-    gender: Optional[str] = Form(None),
-    plural: Optional[str] = Form(None),
-    preterite: Optional[str] = Form(None),
-    past_participle: Optional[str] = Form(None),
-    auxiliary: Optional[str] = Form(None),
+    gender: str | None = Form(None),
+    plural: str | None = Form(None),
+    preterite: str | None = Form(None),
+    past_participle: str | None = Form(None),
+    auxiliary: str | None = Form(None),
     translations: str = Form(""),
     session: AsyncSession = Depends(get_session),
-):
+) -> Response:
     """Update an extraction's metadata."""
     extraction = await session.get(Extraction, extraction_id)
     if not extraction:

@@ -1,10 +1,10 @@
 """SQLAlchemy ORM models."""
 
-from datetime import datetime
-from typing import Optional
 import json
+from datetime import datetime
+from typing import Any, Optional, cast
 
-from sqlalchemy import ForeignKey, Text, UniqueConstraint, JSON
+from sqlalchemy import ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -18,9 +18,11 @@ class Document(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     filename: Mapped[str] = mapped_column(Text)
     content_hash: Mapped[str] = mapped_column(Text, unique=True)
-    status: Mapped[str] = mapped_column(Text, default="processing")  # processing, pending_review, reviewed, error
-    raw_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        Text, default="processing"
+    )  # processing, pending_review, reviewed, error
+    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
     # Relationships
@@ -44,21 +46,19 @@ class Word(Base):
     """Accepted vocabulary word in the user's collection."""
 
     __tablename__ = "words"
-    __table_args__ = (
-        UniqueConstraint("lemma", "pos", "gender", name="uq_word_identity"),
-    )
+    __table_args__ = (UniqueConstraint("lemma", "pos", "gender", name="uq_word_identity"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     lemma: Mapped[str] = mapped_column(Text, index=True)
     pos: Mapped[str] = mapped_column(Text)  # NOUN, VERB, ADJ, ADV, ADP
-    gender: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # der/die/das (nouns only)
-    plural: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # nouns only
-    preterite: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # verbs only
-    past_participle: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # verbs only
-    auxiliary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # haben/sein (verbs only)
-    translations: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array
-    anki_note_id: Mapped[Optional[int]] = mapped_column(nullable=True)
-    anki_synced_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    gender: Mapped[str | None] = mapped_column(Text, nullable=True)  # der/die/das (nouns only)
+    plural: Mapped[str | None] = mapped_column(Text, nullable=True)  # nouns only
+    preterite: Mapped[str | None] = mapped_column(Text, nullable=True)  # verbs only
+    past_participle: Mapped[str | None] = mapped_column(Text, nullable=True)  # verbs only
+    auxiliary: Mapped[str | None] = mapped_column(Text, nullable=True)  # haben/sein (verbs only)
+    translations: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    anki_note_id: Mapped[int | None] = mapped_column(nullable=True)
+    anki_synced_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
     # Relationships
@@ -70,7 +70,8 @@ class Word(Base):
         if not self.translations:
             return []
         try:
-            return json.loads(self.translations)
+            result: Any = json.loads(self.translations)
+            return cast(list[str], result)
         except json.JSONDecodeError:
             return []
 
@@ -84,12 +85,12 @@ class Word(Base):
         """Get word with article for nouns."""
         if self.pos == "NOUN" and self.gender:
             return f"{self.gender} {self.lemma}"
-        return self.lemma
+        return str(self.lemma)
 
     @property
     def grammar_info(self) -> str:
         """Get formatted grammar information."""
-        parts = []
+        parts: list[str] = []
         if self.plural:
             parts.append(f"pl: {self.plural}")
         if self.preterite:
@@ -112,18 +113,20 @@ class Extraction(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"))
-    word_id: Mapped[Optional[int]] = mapped_column(ForeignKey("words.id"), nullable=True)
+    word_id: Mapped[int | None] = mapped_column(ForeignKey("words.id"), nullable=True)
     surface_form: Mapped[str] = mapped_column(Text)
     lemma: Mapped[str] = mapped_column(Text)
     pos: Mapped[str] = mapped_column(Text)
-    gender: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    plural: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    preterite: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    past_participle: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    auxiliary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    translations: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array
-    context_sentence: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(Text, default="pending")  # pending, accepted, rejected, duplicate
+    gender: Mapped[str | None] = mapped_column(Text, nullable=True)
+    plural: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preterite: Mapped[str | None] = mapped_column(Text, nullable=True)
+    past_participle: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auxiliary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    translations: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    context_sentence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        Text, default="pending"
+    )  # pending, accepted, rejected, duplicate
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
     # Relationships
@@ -136,7 +139,8 @@ class Extraction(Base):
         if not self.translations:
             return []
         try:
-            return json.loads(self.translations)
+            result: Any = json.loads(self.translations)
+            return cast(list[str], result)
         except json.JSONDecodeError:
             return []
 
@@ -150,12 +154,12 @@ class Extraction(Base):
         """Get word with article for nouns."""
         if self.pos == "NOUN" and self.gender:
             return f"{self.gender} {self.lemma}"
-        return self.lemma
+        return str(self.lemma)
 
     @property
     def grammar_info(self) -> str:
         """Get formatted grammar information."""
-        parts = []
+        parts: list[str] = []
         if self.plural:
             parts.append(f"pl: {self.plural}")
         if self.preterite:

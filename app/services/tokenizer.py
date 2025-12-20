@@ -1,7 +1,13 @@
 """Tokenization service using spaCy for German text."""
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -9,6 +15,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TokenInfo:
     """Information about an extracted token."""
+
     surface_form: str
     lemma: str
     pos: str
@@ -22,13 +29,32 @@ class Tokenizer:
     RELEVANT_POS = {"NOUN", "VERB", "ADJ", "ADV", "ADP"}
 
     # Past participle patterns (often mistagged as nouns)
-    PARTICIPLE_PREFIXES = ("ge", "ab", "an", "auf", "aus", "be", "ein", "er", "ver", "vor", "zu", "ent", "emp", "miss", "zer")
+    PARTICIPLE_PREFIXES = (
+        "ge",
+        "ab",
+        "an",
+        "auf",
+        "aus",
+        "be",
+        "ein",
+        "er",
+        "ver",
+        "vor",
+        "zu",
+        "ent",
+        "emp",
+        "miss",
+        "zer",
+    )
 
     # Preposition contractions to expand
     PREPOSITION_CONTRACTIONS = {
-        "zum": "zu", "zur": "zu",
-        "im": "in", "ins": "in",
-        "am": "an", "ans": "an",
+        "zum": "zu",
+        "zur": "zu",
+        "im": "in",
+        "ins": "in",
+        "am": "an",
+        "ans": "an",
         "beim": "bei",
         "vom": "von",
         "aufs": "auf",
@@ -43,14 +69,22 @@ class Tokenizer:
 
     # Diminutives that are canonical forms (no base word in modern German)
     DIMINUTIVE_EXCEPTIONS = {
-        "mädchen", "brötchen", "kaninchen", "eichhörnchen",
-        "märchen", "veilchen", "hörnchen", "würstchen",
-        "teilchen", "bisschen", "plätzchen",
+        "mädchen",
+        "brötchen",
+        "kaninchen",
+        "eichhörnchen",
+        "märchen",
+        "veilchen",
+        "hörnchen",
+        "würstchen",
+        "teilchen",
+        "bisschen",
+        "plätzchen",
     }
 
-    def __init__(self, model_name: str = "de_core_news_lg"):
+    def __init__(self, model_name: str = "de_core_news_lg") -> None:
         self.model_name = model_name
-        self._nlp = None
+        self._nlp: Any = None
 
     def _looks_like_participle(self, word: str) -> bool:
         """Check if word looks like a German past participle."""
@@ -59,12 +93,41 @@ class Tokenizer:
         # Common participle pattern: ge...t or ge...en
         if lower.startswith("ge") and (lower.endswith("t") or lower.endswith("en")):
             # Exclude common nouns: Gerät, Geschäft, Gebiet, Gesetz, etc.
-            if lower in ("gerät", "geschäft", "gebiet", "gesetz", "gebet", "gedicht", "geheimnis", "gehalt", "gelände", "gemüt", "gericht", "geschlecht", "gesicht", "gewicht"):
+            if lower in (
+                "gerät",
+                "geschäft",
+                "gebiet",
+                "gesetz",
+                "gebet",
+                "gedicht",
+                "geheimnis",
+                "gehalt",
+                "gelände",
+                "gemüt",
+                "gericht",
+                "geschlecht",
+                "gesicht",
+                "gewicht",
+            ):
                 return False
             return True
 
         # Separable verb participles with -ge-: abgerechnet, eingestellt, etc.
-        for prefix in ("ab", "an", "auf", "aus", "ein", "vor", "zu", "mit", "nach", "um", "weg", "her", "hin"):
+        for prefix in (
+            "ab",
+            "an",
+            "auf",
+            "aus",
+            "ein",
+            "vor",
+            "zu",
+            "mit",
+            "nach",
+            "um",
+            "weg",
+            "her",
+            "hin",
+        ):
             if prefix + "ge" in lower and (lower.endswith("t") or lower.endswith("en")):
                 return True
 
@@ -82,7 +145,19 @@ class Tokenizer:
             return True
         if lower.endswith("in") and len(lower) > 4:
             # Check it's not a word that naturally ends in -in
-            exceptions = ("termin", "berlin", "protein", "vitamin", "kamin", "delfin", "pinguin", "rosmarin", "satin", "ruin", "cousin")
+            exceptions = (
+                "termin",
+                "berlin",
+                "protein",
+                "vitamin",
+                "kamin",
+                "delfin",
+                "pinguin",
+                "rosmarin",
+                "satin",
+                "ruin",
+                "cousin",
+            )
             if lower not in exceptions:
                 return True
         return False
@@ -92,14 +167,38 @@ class Tokenizer:
         lower = word.lower()
         # Common adjective suffixes that indicate nominalized adjectives
         adjective_suffixes = (
-            "bare", "baren", "barer", "bares",  # -bar (abschaltbar)
-            "liche", "lichen", "licher", "liches",  # -lich
-            "ige", "igen", "iger", "iges",  # -ig
-            "ische", "ischen", "ischer", "isches",  # -isch
-            "lose", "losen", "loser", "loses",  # -los
-            "same", "samen", "samer", "sames",  # -sam
-            "hafte", "haften", "hafter", "haftes",  # -haft
-            "artige", "artigen", "artiger", "artiges",  # -artig
+            "bare",
+            "baren",
+            "barer",
+            "bares",  # -bar (abschaltbar)
+            "liche",
+            "lichen",
+            "licher",
+            "liches",  # -lich
+            "ige",
+            "igen",
+            "iger",
+            "iges",  # -ig
+            "ische",
+            "ischen",
+            "ischer",
+            "isches",  # -isch
+            "lose",
+            "losen",
+            "loser",
+            "loses",  # -los
+            "same",
+            "samen",
+            "samer",
+            "sames",  # -sam
+            "hafte",
+            "haften",
+            "hafter",
+            "haftes",  # -haft
+            "artige",
+            "artigen",
+            "artiger",
+            "artiges",  # -artig
         )
         for suffix in adjective_suffixes:
             if lower.endswith(suffix) and len(lower) > len(suffix) + 2:
@@ -115,9 +214,23 @@ class Tokenizer:
             return lower[:-1] + "en"
 
         # Separable verbs: abge...t → ab...en, abge...en → ab...en
-        for prefix in ("ab", "an", "auf", "aus", "ein", "vor", "zu", "mit", "nach", "um", "weg", "her", "hin"):
+        for prefix in (
+            "ab",
+            "an",
+            "auf",
+            "aus",
+            "ein",
+            "vor",
+            "zu",
+            "mit",
+            "nach",
+            "um",
+            "weg",
+            "her",
+            "hin",
+        ):
             if lower.startswith(prefix + "ge"):
-                stem = lower[len(prefix) + 2:]  # Remove prefix + "ge"
+                stem = lower[len(prefix) + 2 :]  # Remove prefix + "ge"
                 if stem.endswith("t"):
                     return prefix + stem[:-1] + "en"
                 elif stem.endswith("en"):
@@ -146,7 +259,7 @@ class Tokenizer:
         # Superlative: -sten, -ste, -st
         for suffix in ("sten", "ste", "st"):
             if lower.endswith(suffix) and len(lower) > len(suffix) + 2:
-                base = lower[:-len(suffix)]
+                base = lower[: -len(suffix)]
                 return self._restore_umlaut(base)
 
         # Comparative: -er (but not words naturally ending in -er)
@@ -177,10 +290,11 @@ class Tokenizer:
 
         return word
 
-    def _load_model(self):
+    def _load_model(self) -> Any:
         """Load spaCy model lazily."""
         if self._nlp is None:
             import spacy
+
             logger.info(f"Loading spaCy model: {self.model_name}")
             self._nlp = spacy.load(self.model_name)
         return self._nlp
@@ -255,12 +369,14 @@ class Tokenizer:
                     continue
                 seen.add(key)
 
-                tokens.append(TokenInfo(
-                    surface_form=token.text,
-                    lemma=lemma,
-                    pos=token.pos_,
-                    context_sentence=sentence_text,
-                ))
+                tokens.append(
+                    TokenInfo(
+                        surface_form=token.text,
+                        lemma=lemma,
+                        pos=token.pos_,
+                        context_sentence=sentence_text,
+                    )
+                )
 
         logger.info(f"Extracted {len(tokens)} unique tokens from text")
         return tokens
