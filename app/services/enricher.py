@@ -1,5 +1,6 @@
 """LLM enrichment service using Ollama for German vocabulary."""
 
+import asyncio
 import json
 import logging
 import re
@@ -10,6 +11,10 @@ import httpx
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Global semaphore to ensure only one LLM request runs at a time
+# This prevents overwhelming the LLM server and ensures predictable resource usage
+_llm_semaphore = asyncio.Semaphore(1)
 
 
 @dataclass
@@ -90,36 +95,41 @@ Example response:
         Enrich a word with grammatical information via Ollama.
 
         Returns EnrichmentResult with available fields populated.
+
+        Uses a semaphore to ensure only one LLM request runs at a time,
+        preventing resource contention and ensuring predictable behavior.
         """
         prompt = self._build_prompt(lemma, pos, context)
 
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/api/generate",
-                    json={
-                        "model": self.model,
-                        "prompt": prompt,
-                        "stream": False,
-                        "options": {
-                            "temperature": 0.1,  # Low temperature for consistent output
+        # Acquire semaphore to ensure only one LLM request at a time
+        async with _llm_semaphore:
+            try:
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    response = await client.post(
+                        f"{self.base_url}/api/generate",
+                        json={
+                            "model": self.model,
+                            "prompt": prompt,
+                            "stream": False,
+                            "options": {
+                                "temperature": 0.1,  # Low temperature for consistent output
+                            },
                         },
-                    },
-                )
-                response.raise_for_status()
+                    )
+                    response.raise_for_status()
 
-            result_text = response.json().get("response", "")
-            return self._parse_response(result_text, pos)
+                result_text = response.json().get("response", "")
+                return self._parse_response(result_text, pos)
 
-        except httpx.TimeoutException:
-            logger.warning(f"Ollama timeout for '{lemma}', skipping enrichment")
-            return EnrichmentResult(translations=[])
-        except httpx.HTTPError as e:
-            logger.warning(f"Ollama HTTP error for '{lemma}': {e}")
-            return EnrichmentResult(translations=[])
-        except Exception as e:
-            logger.warning(f"Enrichment error for '{lemma}': {e}")
-            return EnrichmentResult(translations=[])
+            except httpx.TimeoutException:
+                logger.warning(f"Ollama timeout for '{lemma}', skipping enrichment")
+                return EnrichmentResult(translations=[])
+            except httpx.HTTPError as e:
+                logger.warning(f"Ollama HTTP error for '{lemma}': {e}")
+                return EnrichmentResult(translations=[])
+            except Exception as e:
+                logger.warning(f"Enrichment error for '{lemma}': {e}")
+                return EnrichmentResult(translations=[])
 
     def _clean_json(self, json_str: str) -> str:
         """Clean LLM output to get valid JSON."""
