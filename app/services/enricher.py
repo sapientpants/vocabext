@@ -54,8 +54,8 @@ Part of speech: Noun
 Context: "{context}"
 
 Respond with ONLY a JSON object (no markdown, no explanation) with these fields:
-- "gender": the article (der, die, or das)
-- "plural": the plural form of the noun
+- "gender": the article for the SINGULAR form only (der, die, or das) - just ONE article
+- "plural": the plural form of the noun (e.g., "die Arbeiten")
 - "translations": array of 1-3 English translations
 
 Example response:
@@ -180,11 +180,20 @@ Example response:
         )
 
         if pos == "NOUN":
-            result.gender = data.get("gender")
-            result.plural = data.get("plural")
+            result.gender = self._normalize_to_string(data.get("gender"))
+            result.plural = self._normalize_to_string(data.get("plural"))
         elif pos == "VERB":
-            result.preterite = data.get("preterite")
-            result.past_participle = data.get("past_participle")
-            result.auxiliary = data.get("auxiliary")
+            result.preterite = self._normalize_to_string(data.get("preterite"))
+            result.past_participle = self._normalize_to_string(data.get("past_participle"))
+            result.auxiliary = self._normalize_to_string(data.get("auxiliary"))
 
         return result
+
+    def _normalize_to_string(self, value: str | list[str] | None) -> str | None:
+        """Normalize a value to a string, handling lists from LLM responses."""
+        if value is None:
+            return None
+        if isinstance(value, list):
+            # LLM sometimes returns lists - take the first value (singular form)
+            return str(value[0]) if value else None
+        return str(value)
