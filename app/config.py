@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     # AnkiConnect
     anki_connect_url: str = "http://localhost:8765"
-    anki_deck: str = "German::Work Vocabulary"
+    anki_deck: str = "German::Vocabulary"
     anki_note_type: str = "German Vocabulary"
 
     # spaCy
