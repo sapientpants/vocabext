@@ -322,11 +322,12 @@ class TestTokenize:
         with patch.dict(sys.modules, {"spacy": mock_spacy}):
             yield mock_spacy
 
-    def _create_mock_token(self, text, lemma, pos, is_alpha=True):
+    def _create_mock_token(self, text, lemma, pos, is_alpha=True, like_num=False):
         """Helper to create a mock token."""
         mock_token = MagicMock()
         mock_token.pos_ = pos
         mock_token.is_alpha = is_alpha
+        mock_token.like_num = like_num
         mock_token.text = text
         mock_token.lemma_ = lemma
         return mock_token
@@ -397,6 +398,38 @@ class TestTokenize:
         assert len(tokens) == 1
         assert tokens[0].lemma == "zu"
 
+    def test_skips_number_like_tokens(self, mock_spacy):
+        """Should skip tokens that look like numbers."""
+        mock_token = self._create_mock_token("15", "15", "NOUN", like_num=True)
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        tokens = tokenizer.tokenize("15 Euro")
+        assert len(tokens) == 0
+
+    def test_skips_stopwords_months(self, mock_spacy):
+        """Should skip month names."""
+        mock_token = self._create_mock_token("Januar", "januar", "NOUN")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        tokens = tokenizer.tokenize("im Januar")
+        assert len(tokens) == 0
+
+    def test_skips_stopwords_days(self, mock_spacy):
+        """Should skip day names."""
+        mock_token = self._create_mock_token("Montag", "montag", "NOUN")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        tokens = tokenizer.tokenize("am Montag")
+        assert len(tokens) == 0
+
+    def test_skips_ordinals(self, mock_spacy):
+        """Should skip ordinal numbers."""
+        mock_token = self._create_mock_token("erste", "erster", "ADJ")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        tokens = tokenizer.tokenize("der erste Tag")
+        assert len(tokens) == 0
+
 
 class TestTokenizerConstants:
     """Tests for Tokenizer class constants."""
@@ -420,3 +453,22 @@ class TestTokenizerConstants:
         assert "mädchen" in Tokenizer.DIMINUTIVE_EXCEPTIONS
         assert "brötchen" in Tokenizer.DIMINUTIVE_EXCEPTIONS
         assert "kaninchen" in Tokenizer.DIMINUTIVE_EXCEPTIONS
+
+    def test_stopwords_months(self):
+        """Should have month names in stopwords."""
+        assert "januar" in Tokenizer.STOPWORDS
+        assert "februar" in Tokenizer.STOPWORDS
+        assert "dezember" in Tokenizer.STOPWORDS
+
+    def test_stopwords_days(self):
+        """Should have day names in stopwords."""
+        assert "montag" in Tokenizer.STOPWORDS
+        assert "dienstag" in Tokenizer.STOPWORDS
+        assert "sonntag" in Tokenizer.STOPWORDS
+
+    def test_ordinal_lemmas(self):
+        """Should have ordinal lemmas."""
+        assert "erster" in Tokenizer.ORDINAL_LEMMAS
+        assert "zweiter" in Tokenizer.ORDINAL_LEMMAS
+        assert "dritter" in Tokenizer.ORDINAL_LEMMAS
+        assert "zwanzigster" in Tokenizer.ORDINAL_LEMMAS
