@@ -82,6 +82,64 @@ class Tokenizer:
         "plätzchen",
     }
 
+    # Words to skip (months, days) - cardinal numbers filtered by POS=NUM
+    STOPWORDS = {
+        # Months
+        "januar",
+        "februar",
+        "märz",
+        "april",
+        "mai",
+        "juni",
+        "juli",
+        "august",
+        "september",
+        "oktober",
+        "november",
+        "dezember",
+        # Days of the week
+        "montag",
+        "dienstag",
+        "mittwoch",
+        "donnerstag",
+        "freitag",
+        "samstag",
+        "sonntag",
+    }
+
+    # German ordinal base forms (lemmas as returned by spaCy) - tagged as ADJ
+    ORDINAL_LEMMAS = {
+        "erster",
+        "zweiter",
+        "dritter",
+        "vierter",
+        "fünfter",
+        "sechster",
+        "siebter",
+        "achter",
+        "neunter",
+        "zehnter",
+        "elfter",
+        "zwölfter",
+        "dreizehnter",
+        "vierzehnter",
+        "fünfzehnter",
+        "sechzehnter",
+        "siebzehnter",
+        "achtzehnter",
+        "neunzehnter",
+        "zwanzigster",
+        "dreißigster",
+        "vierzigster",
+        "fünfzigster",
+        "sechzigster",
+        "siebzigster",
+        "achtzigster",
+        "neunzigster",
+        "hundertster",
+        "tausendster",
+    }
+
     def __init__(self, model_name: str = "de_core_news_lg") -> None:
         self.model_name = model_name
         self._nlp: Any = None
@@ -322,6 +380,18 @@ class Tokenizer:
 
                 # Skip punctuation, spaces, numbers
                 if not token.is_alpha:
+                    continue
+
+                # Skip number-like tokens
+                if token.like_num:
+                    continue
+
+                # Skip stopwords (months, days of week)
+                if token.lemma_.lower() in self.STOPWORDS:
+                    continue
+
+                # Skip ordinal numbers (erste, zweite, dritte, etc.)
+                if token.lemma_.lower() in self.ORDINAL_LEMMAS:
                     continue
 
                 # Skip very short tokens
