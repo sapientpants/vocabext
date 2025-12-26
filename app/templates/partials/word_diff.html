@@ -1,0 +1,97 @@
+<div class="diff-view">
+    <h4>LLM Suggestions</h4>
+
+    {% if error %}
+    <div class="diff-error">{{ error }}</div>
+    {% elif not diff %}
+    <p class="diff-match">No differences found. Current data matches LLM suggestions.</p>
+    {% else %}
+
+    {% if duplicate_word %}
+    <div class="diff-warning">
+        <strong>Duplicate detected:</strong> The suggested lemma "{{ diff.lemma.suggested }}" already exists in your vocabulary
+        as "{{ duplicate_word.display_word }}".
+        <br><br>
+        <strong>Recommendation:</strong> Delete this word to avoid duplicates.
+        <form hx-delete="/vocabulary/{{ word.id }}"
+              hx-target="#word-{{ word.id }}"
+              hx-swap="outerHTML"
+              hx-confirm="Delete '{{ word.display_word }}'? This cannot be undone."
+              style="display: inline;">
+            <button type="submit" class="delete-btn">Delete this word</button>
+        </form>
+        or
+        <button type="button" class="outline"
+                hx-get="/vocabulary/{{ word.id }}/edit"
+                hx-target="#word-{{ word.id }}"
+                hx-swap="outerHTML">
+            Cancel
+        </button>
+    </div>
+    {% else %}
+
+    <form hx-post="/vocabulary/{{ word.id }}/apply-suggestions"
+          hx-target="#word-{{ word.id }}"
+          hx-swap="outerHTML">
+
+        <table class="diff-table">
+            <thead>
+                <tr>
+                    <th>Field</th>
+                    <th>Current</th>
+                    <th>Suggested</th>
+                    <th>Apply</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for field, values in diff.items() %}
+                <tr>
+                    <td>
+                        <strong>{{ field | replace('_', ' ') | title }}</strong>
+                        {% if field == 'lemma' and values.reason %}
+                        <br><small class="diff-reason">{{ values.reason }}</small>
+                        {% endif %}
+                    </td>
+                    <td class="diff-current">
+                        {% if field == 'translations' %}
+                            {{ values.current | join(', ') if values.current else '(empty)' }}
+                        {% else %}
+                            {{ values.current or '(empty)' }}
+                        {% endif %}
+                    </td>
+                    <td class="diff-suggested">
+                        {% if field == 'translations' %}
+                            {{ values.suggested | join(', ') if values.suggested else '(empty)' }}
+                        {% else %}
+                            {{ values.suggested or '(empty)' }}
+                        {% endif %}
+                    </td>
+                    <td class="diff-checkbox">
+                        <input type="checkbox" name="apply_{{ field }}" value="1" checked>
+                        <input type="hidden" name="suggested_{{ field }}"
+                               value="{% if field == 'translations' %}{{ values.suggested | join(',') if values.suggested else '' }}{% else %}{{ values.suggested or '' }}{% endif %}">
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="diff-actions">
+            <button type="button" class="outline secondary" onclick="this.closest('form').querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true)">
+                Select All
+            </button>
+            <button type="button" class="outline secondary" onclick="this.closest('form').querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false)">
+                Deselect All
+            </button>
+            <button type="submit" class="primary">Apply Selected</button>
+            <button type="button" class="outline"
+                    hx-get="/vocabulary/{{ word.id }}/edit"
+                    hx-target="#word-{{ word.id }}"
+                    hx-swap="outerHTML">
+                Cancel
+            </button>
+        </div>
+    </form>
+    {% endif %}
+    {% endif %}
+</div>

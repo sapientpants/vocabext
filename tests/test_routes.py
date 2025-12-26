@@ -147,15 +147,15 @@ class TestVocabularyRoutes:
         """Should return 404 for nonexistent word."""
         response = await async_client.put(
             "/vocabulary/99999",
-            data={"translations": "test"},
+            data={"lemma": "test", "translations": "test"},
         )
         assert response.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_delete_word_not_supported(self, async_client: AsyncClient):
-        """DELETE method is not supported on vocabulary routes."""
+    async def test_delete_nonexistent_word(self, async_client: AsyncClient):
+        """Should return 404 for nonexistent word."""
         response = await async_client.delete("/vocabulary/99999")
-        assert response.status_code == 405  # Method Not Allowed
+        assert response.status_code == 404
 
 
 class TestSyncRoutes:
