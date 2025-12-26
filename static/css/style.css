@@ -237,3 +237,147 @@ nav {
         align-items: stretch;
     }
 }
+
+/* Edit form error */
+.edit-error {
+    padding: 0.75rem;
+    margin-bottom: 1rem;
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
+}
+
+/* Edit header with lemma input */
+.edit-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.edit-header label {
+    flex: 1;
+    margin: 0;
+}
+
+/* Validation section */
+.validation-section {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px dashed #dee2e6;
+}
+
+.validation-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 0.5rem;
+}
+
+/* HTMX indicator */
+.htmx-indicator {
+    display: none;
+    color: #666;
+    font-style: italic;
+}
+
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+    display: inline;
+}
+
+/* Diff view */
+.diff-view {
+    margin-top: 1rem;
+    padding: 1rem;
+    background-color: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+}
+
+.diff-view h4 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+}
+
+.diff-error {
+    padding: 0.75rem;
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
+}
+
+.diff-match {
+    color: #155724;
+    font-style: italic;
+}
+
+.diff-table {
+    width: 100%;
+    margin-bottom: 1rem;
+    border-collapse: collapse;
+}
+
+.diff-table th,
+.diff-table td {
+    padding: 0.5rem;
+    text-align: left;
+    vertical-align: middle;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.diff-table th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+}
+
+.diff-current {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.diff-suggested {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.diff-checkbox {
+    text-align: center;
+}
+
+.diff-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.diff-actions button {
+    margin: 0;
+}
+
+.diff-warning {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    background-color: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeeba;
+    border-radius: 4px;
+}
+
+.delete-btn {
+    background-color: #dc3545;
+    border-color: #dc3545;
+    color: white;
+}
+
+.delete-btn:hover {
+    background-color: #c82333;
+    border-color: #bd2130;
+}
+
+.diff-reason {
+    color: #6c757d;
+    font-style: italic;
+}

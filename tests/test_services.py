@@ -1,7 +1,7 @@
 """Tests for service modules."""
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -43,10 +43,12 @@ class TestEnricher:
     """Tests for Enricher service."""
 
     def test_init_defaults(self):
-        """Should use default settings."""
+        """Should use default settings from config."""
+        from app.config import settings
+
         enricher = Enricher()
-        assert enricher.base_url == "http://localhost:11434"
-        assert enricher.model == "ministral-3:14b"
+        assert enricher.base_url == settings.ollama_base_url
+        assert enricher.model == settings.ollama_model
 
     def test_init_custom(self):
         """Should accept custom settings."""
@@ -155,6 +157,158 @@ class TestEnricher:
         """Should only allow one LLM request at a time."""
         # Check that semaphore is initialized with 1
         assert _llm_semaphore._value == 1
+
+    def test_extract_json_object_simple(self):
+        """Should extract simple JSON object."""
+        enricher = Enricher()
+        text = 'Some text {"key": "value"} more text'
+        result = enricher._extract_json_object(text)
+        assert result == '{"key": "value"}'
+
+    def test_extract_json_object_nested(self):
+        """Should extract nested JSON object."""
+        enricher = Enricher()
+        text = '{"outer": {"inner": "value"}} trailing'
+        result = enricher._extract_json_object(text)
+        assert result == '{"outer": {"inner": "value"}}'
+
+    def test_extract_json_object_with_strings(self):
+        """Should handle braces inside strings."""
+        enricher = Enricher()
+        text = '{"key": "value with { brace }"} more'
+        result = enricher._extract_json_object(text)
+        assert result == '{"key": "value with { brace }"}'
+
+    def test_extract_json_object_no_json(self):
+        """Should return None when no JSON found."""
+        enricher = Enricher()
+        result = enricher._extract_json_object("no json here")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_validate_lemma_success(self):
+        """Should validate lemma with LLM."""
+        enricher = Enricher()
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
+
+            mock_response = MagicMock()
+            mock_response.json.return_value = {
+                "response": '{"valid": true, "corrected_lemma": "Arbeit"}'
+            }
+            mock_response.raise_for_status = MagicMock()
+            mock_instance.post.return_value = mock_response
+
+            result = await enricher.validate_lemma("Arbeit", "NOUN", "context")
+            assert result["valid"] is True
+            assert result["corrected_lemma"] == "Arbeit"
+
+    @pytest.mark.asyncio
+    async def test_validate_lemma_with_correction(self):
+        """Should return corrected lemma when invalid."""
+        enricher = Enricher()
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
+
+            mock_response = MagicMock()
+            mock_response.json.return_value = {
+                "response": '{"valid": false, "corrected_lemma": "Abbaustelle", "reason": "truncated word"}'
+            }
+            mock_response.raise_for_status = MagicMock()
+            mock_instance.post.return_value = mock_response
+
+            result = await enricher.validate_lemma("Abbaustell", "NOUN", "context")
+            assert result["valid"] is False
+            assert result["corrected_lemma"] == "Abbaustelle"
+            assert result["reason"] == "truncated word"
+
+    @pytest.mark.asyncio
+    async def test_validate_lemma_connection_error(self):
+        """Should handle connection errors gracefully."""
+        enricher = Enricher()
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
+
+            import httpx
+
+            mock_instance.post.side_effect = httpx.ConnectError("connection failed")
+
+            result = await enricher.validate_lemma("Arbeit", "NOUN", "context")
+            assert result["valid"] is True  # Default to valid on error
+            assert result["corrected_lemma"] == "Arbeit"
+            assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_enrich_with_error_field(self):
+        """Should set error field on failure."""
+        enricher = Enricher()
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
+
+            import httpx
+
+            mock_instance.post.side_effect = httpx.ConnectError("connection failed")
+
+            result = await enricher.enrich("test", "NOUN", "context")
+            assert result.error is not None
+            assert "connect" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_enrich_success(self):
+        """Should enrich word successfully."""
+        enricher = Enricher()
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
+
+            mock_response = MagicMock()
+            mock_response.json.return_value = {
+                "response": '{"lemma": "Arbeit", "gender": "die", "plural": "Arbeiten", "translations": ["work"]}'
+            }
+            mock_response.raise_for_status = MagicMock()
+            mock_instance.post.return_value = mock_response
+
+            result = await enricher.enrich("Arbeit", "NOUN", "context")
+            assert result.gender == "die"
+            assert result.plural == "Arbeiten"
+            assert result.translations == ["work"]
+            assert result.error is None
+
+    @pytest.mark.asyncio
+    async def test_enrich_http_404_error(self):
+        """Should handle 404 error with specific message."""
+        enricher = Enricher()
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
+
+            import httpx
+
+            mock_response = MagicMock()
+            mock_response.status_code = 404
+            mock_instance.post.side_effect = httpx.HTTPStatusError(
+                "Not Found", request=MagicMock(), response=mock_response
+            )
+
+            result = await enricher.enrich("test", "NOUN", "context")
+            assert result.error is not None
+            assert "not found" in result.error.lower()
 
 
 class TestTextExtractor:

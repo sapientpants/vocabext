@@ -15,5 +15,10 @@
                 hx-get="/vocabulary/{{ word.id }}/edit"
                 hx-target="#word-{{ word.id }}"
                 hx-swap="outerHTML">Edit</button>
+        <button class="small delete-btn"
+                hx-delete="/vocabulary/{{ word.id }}"
+                hx-target="#word-{{ word.id }}"
+                hx-swap="outerHTML"
+                hx-confirm="Delete '{{ word.display_word }}'? This cannot be undone.">Delete</button>
     </td>
 </tr>
