@@ -4,8 +4,16 @@
               hx-target="#word-{{ word.id }}"
               hx-swap="outerHTML">
             <div class="edit-form">
+                {% if error %}
+                <div class="edit-error">{{ error }}</div>
+                {% endif %}
+
                 <div class="edit-header">
-                    <strong>{{ word.lemma }}</strong> ({{ word.pos }})
+                    <label>
+                        Lemma
+                        <input type="text" name="lemma" value="{{ word.lemma }}" required>
+                    </label>
+                    <span class="pos-tag">{{ word.pos }}</span>
                 </div>
 
                 <div class="edit-fields">
@@ -58,6 +66,27 @@
                         Cancel
                     </button>
                 </div>
+
+                <div class="validation-section">
+                    <label class="full-width">
+                        Context sentence (optional, improves LLM accuracy)
+                        <input type="text" id="context-{{ word.id }}" name="context_sentence"
+                               placeholder="Example sentence using this word...">
+                    </label>
+                    <div class="validation-actions">
+                        <button type="button" class="secondary outline"
+                                hx-post="/vocabulary/{{ word.id }}/validate"
+                                hx-include="#context-{{ word.id }}"
+                                hx-target="#diff-container-{{ word.id }}"
+                                hx-swap="innerHTML"
+                                hx-indicator="#validate-spinner-{{ word.id }}">
+                            Validate with LLM
+                        </button>
+                        <span id="validate-spinner-{{ word.id }}" class="htmx-indicator">Validating...</span>
+                    </div>
+                </div>
+
+                <div id="diff-container-{{ word.id }}"></div>
             </div>
         </form>
     </td>
