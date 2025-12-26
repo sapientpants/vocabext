@@ -50,51 +50,62 @@ class Enricher:
     def _build_prompt(self, lemma: str, pos: str, context: str) -> str:
         """Build the prompt for LLM enrichment."""
         if pos == "NOUN":
-            return f"""Analyze this German noun and provide grammatical information.
+            return f"""Analyze this German noun and provide verified grammatical information.
 
 Word: {lemma}
 Part of speech: Noun
 Context: "{context}"
 
+IMPORTANT: Verify each field is correct according to German grammar rules:
+- Gender must match the noun's actual grammatical gender
+- Plural must follow correct German pluralization patterns (e.g., -e, -en, -er, -s, umlaut changes)
+- Double-check spelling of all forms
+
 Respond with ONLY a JSON object (no markdown, no explanation) with these fields:
-- "lemma": the correct base form/dictionary form of the noun (singular, nominative)
+- "lemma": the correct base form/dictionary form (singular, nominative)
 - "gender": the article for the SINGULAR form only (der, die, or das) - just ONE article
-- "plural": the plural form of the noun (e.g., "Arbeiten" without article)
+- "plural": the verified correct plural form (e.g., "Arbeiten" without article)
 - "translations": array of 1-3 English translations
 
-Example response:
-{{"lemma": "Arbeit", "gender": "die", "plural": "Arbeiten", "translations": ["work", "labor", "job"]}}"""
+JSON response:"""
 
         elif pos == "VERB":
-            return f"""Analyze this German verb and provide grammatical information.
+            return f"""Analyze this German verb and provide verified grammatical information.
 
 Word: {lemma}
 Part of speech: Verb
 Context: "{context}"
 
+IMPORTANT: Verify each field is correct according to German grammar rules:
+- Check if this is a regular or irregular (strong) verb
+- Preterite must use correct vowel changes for strong verbs
+- Past participle must use correct prefix (ge-) and ending (-t or -en)
+- Auxiliary must be correct (sein for movement/state-change verbs, haben for most others)
+- Double-check spelling of all conjugated forms
+
 Respond with ONLY a JSON object (no markdown, no explanation) with these fields:
 - "lemma": the correct infinitive form of the verb
-- "preterite": the 3rd person singular preterite form
-- "past_participle": the past participle (without auxiliary)
-- "auxiliary": "haben" or "sein"
+- "preterite": the verified 3rd person singular preterite form
+- "past_participle": the verified past participle (without auxiliary)
+- "auxiliary": "haben" or "sein" (verified for this specific verb)
 - "translations": array of 1-3 English translations
 
-Example response:
-{{"lemma": "arbeiten", "preterite": "arbeitete", "past_participle": "gearbeitet", "auxiliary": "haben", "translations": ["to work", "to labor"]}}"""
+JSON response:"""
 
         else:  # ADJ, ADV, ADP
-            return f"""Analyze this German word and provide English translations.
+            return f"""Analyze this German word and provide verified information.
 
 Word: {lemma}
 Part of speech: {pos}
 Context: "{context}"
 
+IMPORTANT: Verify the lemma is the correct base/dictionary form (not inflected or declined).
+
 Respond with ONLY a JSON object (no markdown, no explanation) with these fields:
-- "lemma": the correct base form/dictionary form of the word
+- "lemma": the verified correct base form/dictionary form
 - "translations": array of 1-3 English translations
 
-Example response:
-{{"lemma": "schnell", "translations": ["quickly", "fast", "rapidly"]}}"""
+JSON response:"""
 
     async def enrich(self, lemma: str, pos: str, context: str) -> EnrichmentResult:
         """
