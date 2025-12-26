@@ -203,6 +203,12 @@ IMPORTANT: Check carefully if the word:
 3. Is a real German word that exists in dictionaries
 4. Is in the correct base/dictionary form (not inflected, conjugated, or declined)
 
+CRITICAL: Do NOT remove prefixes! German compound words and prefixed words are valid distinct words:
+- "Abbedingung" is valid (waiver) - do NOT change to "Bedingung"
+- "Abfahrt" is valid (departure) - do NOT change to "Fahrt"
+- "Einleitung" is valid (introduction) - do NOT change to "Leitung"
+Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-, etc.)
+
 Respond with ONLY a JSON object (no markdown, no explanation):
 - "valid": true ONLY if the word is 100% correct as-is
 - "corrected_lemma": the correct complete base/dictionary form (same as input if valid, null if not a real word)
