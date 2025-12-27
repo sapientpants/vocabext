@@ -139,7 +139,7 @@ JSON response:"""
                 return self._parse_response(result_text, pos)
 
             except httpx.TimeoutException:
-                error_msg = f"Ollama request timed out after 120s (URL: {self.base_url})"
+                error_msg = f"Ollama request timed out after 900s (URL: {self.base_url})"
                 logger.warning(f"Ollama timeout for '{lemma}', skipping enrichment")
                 return EnrichmentResult(translations=[], error=error_msg)
             except httpx.HTTPStatusError as e:
@@ -360,3 +360,37 @@ JSON format:
             # LLM sometimes returns lists - take the first value (singular form)
             return str(value[0]) if value else None
         return str(value)
+
+    async def validate_and_enrich(
+        self, lemma: str, pos: str, context: str = ""
+    ) -> EnrichmentResult:
+        """
+        Validate lemma and get enrichment in one operation.
+
+        First validates the lemma is correct, then enriches with grammatical info.
+        If lemma needs correction, uses the corrected lemma for enrichment.
+
+        Returns EnrichmentResult with all available fields populated.
+        """
+        # First validate lemma
+        validation = await self.validate_lemma(lemma, pos, context)
+
+        if validation.get("error"):
+            return EnrichmentResult(
+                lemma=lemma,
+                translations=[],
+                error=validation["error"],
+            )
+
+        # Use corrected lemma if different
+        lemma_to_use = validation.get("corrected_lemma", lemma)
+
+        # Get enrichment with validated/corrected lemma
+        result = await self.enrich(lemma_to_use, pos, context)
+
+        # If lemma was corrected, include the correction in result
+        if lemma_to_use != lemma:
+            result.lemma = lemma_to_use
+            logger.info(f"Lemma corrected: '{lemma}' -> '{lemma_to_use}'")
+
+        return result
