@@ -82,8 +82,8 @@ class TestEditWord:
             },
             follow_redirects=False,
         )
-        # Now returns 303 redirect to detail page (versioning feature)
-        assert response.status_code == 303
+        # Returns 200 OK - frontend JS handles reload
+        assert response.status_code == 200
 
         await async_session.refresh(word)
         assert word.gender == "die"
@@ -107,8 +107,8 @@ class TestEditWord:
             },
             follow_redirects=False,
         )
-        # Now returns 303 redirect to detail page (versioning feature)
-        assert response.status_code == 303
+        # Returns 200 OK - frontend JS handles reload
+        assert response.status_code == 200
 
         await async_session.refresh(word)
         assert word.preterite == "arbeitete"
@@ -135,8 +135,8 @@ class TestEditWord:
             data={"lemma": "Arbeit", "translations": "new translation"},
             follow_redirects=False,
         )
-        # Now returns 303 redirect to detail page (versioning feature)
-        assert response.status_code == 303
+        # Returns 200 OK - frontend JS handles reload
+        assert response.status_code == 200
 
         await async_session.refresh(word)
         assert word.anki_synced_at is None
@@ -292,7 +292,7 @@ class TestApplySuggestions:
             },
             follow_redirects=False,
         )
-        # Now returns 303 redirect to detail page (versioning feature)
+        # apply-suggestions uses regular form submit, returns 303 redirect
         assert response.status_code == 303
 
         await async_session.refresh(word)
@@ -314,7 +314,7 @@ class TestApplySuggestions:
             },
             follow_redirects=False,
         )
-        # Now returns 303 redirect to detail page (versioning feature)
+        # apply-suggestions uses regular form submit, returns 303 redirect
         assert response.status_code == 303
 
         await async_session.refresh(word)
@@ -341,7 +341,7 @@ class TestApplySuggestions:
             data={"apply_gender": "1", "suggested_gender": "die"},
             follow_redirects=False,
         )
-        # Now returns 303 redirect to detail page (versioning feature)
+        # apply-suggestions uses regular form submit, returns 303 redirect
         assert response.status_code == 303
 
         await async_session.refresh(word)

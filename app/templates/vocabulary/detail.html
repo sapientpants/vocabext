@@ -37,7 +37,10 @@
     <section class="edit-section">
         <h2>Edit Word</h2>
         <form hx-put="/vocabulary/{{ word.id }}"
-              hx-swap="none">
+              hx-target="#form-error"
+              hx-swap="innerHTML"
+              hx-on::after-request="if(event.detail.successful && event.detail.xhr.status === 200) window.location.reload()">
+            <div id="form-error"></div>
             <div class="edit-form">
                 <div class="edit-fields">
                     <label>
