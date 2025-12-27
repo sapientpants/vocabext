@@ -381,3 +381,299 @@ nav {
     color: #6c757d;
     font-style: italic;
 }
+
+/* Breadcrumb navigation */
+.breadcrumb {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 1rem 0;
+    display: flex;
+    gap: 0.5rem;
+}
+
+.breadcrumb li {
+    display: flex;
+    align-items: center;
+}
+
+.breadcrumb li:not(:last-child)::after {
+    content: "/";
+    margin-left: 0.5rem;
+    color: #6c757d;
+}
+
+.breadcrumb a {
+    text-decoration: none;
+}
+
+/* Detail page layout */
+.detail-header {
+    margin-bottom: 2rem;
+}
+
+.detail-header hgroup p {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.detail-layout {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 2rem;
+    margin-bottom: 2rem;
+}
+
+@media (max-width: 900px) {
+    .detail-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+.edit-section {
+    min-width: 0;
+}
+
+.edit-section h2,
+.edit-section h3,
+.history-section h2 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    font-size: 1.25rem;
+}
+
+/* Version badge */
+.version-badge {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    background-color: #6c757d;
+    color: white;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+/* Needs re-sync badge */
+.status-badge.needs-sync {
+    background-color: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeeba;
+}
+
+/* History section */
+.history-section {
+    background-color: #f8f9fa;
+    padding: 1rem;
+    border-radius: 8px;
+    height: fit-content;
+}
+
+.version-list ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.version-item {
+    padding: 0.75rem;
+    border-bottom: 1px solid #dee2e6;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.version-item:last-child {
+    border-bottom: none;
+}
+
+.version-item.current {
+    background-color: #d4edda;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+}
+
+.version-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.version-number {
+    font-weight: 600;
+    font-family: monospace;
+}
+
+.version-current-tag {
+    font-size: 0.7rem;
+    background-color: #155724;
+    color: white;
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    text-transform: uppercase;
+}
+
+.version-date {
+    font-size: 0.8rem;
+    color: #6c757d;
+}
+
+.version-reason {
+    font-size: 0.85rem;
+    color: #555;
+    font-style: italic;
+}
+
+.no-history {
+    color: #6c757d;
+    font-style: italic;
+}
+
+/* Version comparison */
+.version-comparison {
+    margin-top: 1rem;
+    padding: 1rem;
+    background-color: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+}
+
+.comparison-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.comparison-header h3 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.diff-old {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.diff-new {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.comparison-meta {
+    margin-top: 1rem;
+    color: #6c757d;
+}
+
+/* Danger zone */
+.danger-zone {
+    margin-top: 3rem;
+    padding: 1rem;
+    border: 1px solid #dc3545;
+    border-radius: 8px;
+    background-color: #fff5f5;
+}
+
+.danger-zone h3 {
+    margin-top: 0;
+    color: #dc3545;
+}
+
+/* Link styled as button (for Edit link) */
+a.small[role="button"] {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    text-decoration: none;
+    display: inline-block;
+}
+
+/* Needs review badge */
+.status-badge.needs-review {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+/* Filter form */
+.filter-form {
+    flex-grow: 1;
+}
+
+.filter-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.filter-row input,
+.filter-row select {
+    margin: 0;
+    min-width: 120px;
+}
+
+.filter-row input[type="text"] {
+    flex-grow: 1;
+    min-width: 150px;
+}
+
+.filter-row button {
+    margin: 0;
+}
+
+/* Action buttons group */
+.action-buttons {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+/* Batch progress */
+.batch-progress {
+    margin: 1rem 0;
+    padding: 1rem;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    border: 1px solid #dee2e6;
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.batch-progress progress {
+    width: 100%;
+    height: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+
+#progress-stats {
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+
+/* Responsive adjustments for filters */
+@media (max-width: 768px) {
+    .filter-row {
+        flex-direction: column;
+    }
+
+    .filter-row input,
+    .filter-row select {
+        width: 100%;
+    }
+
+    .action-buttons {
+        margin-top: 0.5rem;
+        width: 100%;
+    }
+
+    .action-buttons button {
+        flex-grow: 1;
+    }
+}

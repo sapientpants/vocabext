@@ -116,6 +116,71 @@ class Word(Base):
         """Check if word is synced to Anki."""
         return self.anki_note_id is not None
 
+    # Versioning fields and relationships (added after initial definition)
+    current_version: Mapped[int] = mapped_column(default=1)
+    updated_at: Mapped[datetime] = mapped_column(default=_utc_now, onupdate=_utc_now)
+
+    # Review flags for batch validation
+    needs_review: Mapped[bool] = mapped_column(default=False)
+    review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    versions: Mapped[list["WordVersion"]] = relationship(
+        back_populates="word",
+        cascade="all, delete-orphan",
+        order_by="WordVersion.version_number.desc()",
+    )
+
+    @property
+    def needs_sync(self) -> bool:
+        """Check if word has been modified since last sync."""
+        if self.anki_synced_at is None:
+            return True
+        if not self.versions:
+            return True
+        # Check if latest version was created after last sync
+        latest = self.versions[0] if self.versions else None
+        if latest and latest.created_at > self.anki_synced_at:
+            return True
+        return False
+
+
+class WordVersion(Base):
+    """Historical version of a vocabulary word."""
+
+    __tablename__ = "word_versions"
+    __table_args__ = (Index("ix_word_versions_word_id_version", "word_id", "version_number"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    word_id: Mapped[int] = mapped_column(ForeignKey("words.id", ondelete="CASCADE"), index=True)
+    version_number: Mapped[int] = mapped_column()
+
+    # Snapshot of word data at this version
+    lemma: Mapped[str] = mapped_column(Text)
+    pos: Mapped[str] = mapped_column(Text)
+    gender: Mapped[str | None] = mapped_column(Text, nullable=True)
+    plural: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preterite: Mapped[str | None] = mapped_column(Text, nullable=True)
+    past_participle: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auxiliary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    translations: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Version metadata
+    created_at: Mapped[datetime] = mapped_column(default=_utc_now)
+
+    # Relationship
+    word: Mapped["Word"] = relationship(back_populates="versions")
+
+    @property
+    def translations_list(self) -> list[str]:
+        """Get translations as a Python list."""
+        if not self.translations:
+            return []
+        try:
+            result: Any = json.loads(self.translations)
+            return cast(list[str], result)
+        except json.JSONDecodeError:
+            return []
+
 
 class Extraction(Base):
     """Word extraction from a document, pending review."""
