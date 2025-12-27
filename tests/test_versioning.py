@@ -324,9 +324,8 @@ class TestVersionRoutes:
             follow_redirects=False,
         )
 
-        # Should redirect to detail page
-        assert response.status_code == 303
-        assert f"/vocabulary/{word.id}" in response.headers["location"]
+        # Returns 200 OK - frontend JS handles reload
+        assert response.status_code == 200
 
         # Verify version was created
         stmt = select(WordVersion).where(WordVersion.word_id == word.id)
@@ -361,7 +360,7 @@ class TestVersionRoutes:
             follow_redirects=False,
         )
 
-        assert response.status_code == 303
+        assert response.status_code == 200
 
         # Verify no version was created
         stmt = select(WordVersion).where(WordVersion.word_id == word.id)

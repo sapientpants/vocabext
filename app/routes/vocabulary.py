@@ -561,13 +561,10 @@ async def update_word(
 
         existing = (await session.execute(check_stmt)).scalar_one_or_none()
         if existing:
-            return request.app.state.templates.TemplateResponse(
-                "vocabulary/detail.html",
-                {
-                    "request": request,
-                    "word": word,
-                    "error": f"A word '{lemma}' with the same POS and gender already exists.",
-                },
+            # Return just the error div for HTMX to swap in
+            return HTMLResponse(
+                content=f"<div class=\"edit-error\">A word '{lemma}' with the same POS and gender already exists.</div>",
+                status_code=422,
             )
 
     # Check if any fields have actually changed
@@ -606,11 +603,8 @@ async def update_word(
 
         await session.commit()
 
-    # Redirect to detail page (303 See Other for POST-redirect-GET)
-    return RedirectResponse(
-        url=f"/vocabulary/{word_id}",
-        status_code=303,
-    )
+    # Return 200 OK - the frontend JS will reload the page
+    return HTMLResponse(content="", status_code=200)
 
 
 @router.post("/{word_id}/validate", response_class=HTMLResponse)
