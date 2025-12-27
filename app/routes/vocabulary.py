@@ -561,10 +561,9 @@ async def update_word(
 
         existing = (await session.execute(check_stmt)).scalar_one_or_none()
         if existing:
-            # Return just the error div for HTMX to swap in
+            # Return error div for HTMX to swap in (use 200 so HTMX processes it)
             return HTMLResponse(
                 content=f"<div class=\"edit-error\">A word '{lemma}' with the same POS and gender already exists.</div>",
-                status_code=422,
             )
 
     # Check if any fields have actually changed
