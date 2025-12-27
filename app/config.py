@@ -40,9 +40,9 @@ class Settings(BaseSettings):
     def db_path(self) -> Path:
         return self.data_dir / "vocab.db"
 
-    # Ollama
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "ministral-3:14b"
+    # OpenAI
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4.1-mini"
 
     # AnkiConnect
     anki_connect_url: str = "http://localhost:8765"

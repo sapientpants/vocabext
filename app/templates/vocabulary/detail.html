@@ -89,18 +89,21 @@
 
                 <div class="edit-actions">
                     <button type="submit">Save Changes</button>
-                    <button type="button" class="secondary outline"
-                            hx-post="/vocabulary/{{ word.id }}/validate"
-                            hx-target="#diff-container"
-                            hx-swap="innerHTML"
-                            hx-indicator="#validate-spinner">
-                        Validate with LLM
-                    </button>
-                    <span id="validate-spinner" class="htmx-indicator">Validating...</span>
                     <a href="/vocabulary" role="button" class="outline">Back to List</a>
                 </div>
             </div>
         </form>
+
+        <div class="validate-actions">
+            <button type="button" class="secondary outline"
+                    hx-post="/vocabulary/{{ word.id }}/validate"
+                    hx-target="#diff-container"
+                    hx-swap="innerHTML"
+                    hx-indicator="#validate-spinner">
+                Validate with LLM
+            </button>
+            <span id="validate-spinner" class="htmx-indicator">Validating...</span>
+        </div>
 
         <div id="diff-container"></div>
     </section>

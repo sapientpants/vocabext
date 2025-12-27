@@ -52,6 +52,17 @@ async def sync_all(
     result = await session.execute(stmt)
     all_words = result.scalars().all()
 
+    # Delete orphaned Anki notes (notes in Anki that don't exist in database)
+    try:
+        anki_note_ids = set(await anki.get_all_note_ids())
+        db_note_ids = {w.anki_note_id for w in all_words if w.anki_note_id}
+        orphaned_ids = list(anki_note_ids - db_note_ids)
+        if orphaned_ids:
+            await anki.delete_notes(orphaned_ids)
+            logger.info(f"Deleted {len(orphaned_ids)} orphaned notes from Anki")
+    except Exception as e:
+        logger.warning(f"Failed to clean up orphaned notes: {e}")
+
     # Filter to only words that need syncing
     words_to_sync = [w for w in all_words if w.needs_sync]
 
