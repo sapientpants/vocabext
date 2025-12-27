@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.database import get_session
 from app.models import Word
@@ -46,15 +47,19 @@ async def sync_all(
             status_code=500,  # Internal Server Error
         )
 
-    # Get all words for syncing (don't need extractions for sync)
-    stmt = select(Word)
+    # Get all words with their versions (needed for needs_sync property)
+    stmt = select(Word).options(selectinload(Word.versions))
     result = await session.execute(stmt)
-    words = result.scalars().all()
+    all_words = result.scalars().all()
+
+    # Filter to only words that need syncing
+    words_to_sync = [w for w in all_words if w.needs_sync]
 
     synced = 0
     failed = 0
+    skipped = len(all_words) - len(words_to_sync)
 
-    for word in words:
+    for word in words_to_sync:
         note_id = await anki.sync_word(word)
         if note_id:
             word.anki_note_id = note_id
@@ -65,17 +70,26 @@ async def sync_all(
 
     await session.commit()
 
+    # Build status message
+    if synced == 0 and failed == 0:
+        return HTMLResponse(
+            content="""<div class="alert alert-success">
+                All words are already synced. No changes needed.
+            </div>""",
+            status_code=200,
+        )
+
     if failed:
         return HTMLResponse(
             content=f"""<div class="alert alert-warning">
-                Synced {synced} words to Anki. {failed} failed.
+                Synced {synced} words to Anki. {failed} failed. {skipped} already up-to-date.
             </div>""",
             status_code=207,  # Multi-Status for partial success
         )
 
     return HTMLResponse(
         content=f"""<div class="alert alert-success">
-            Successfully synced {synced} words to Anki.
+            Successfully synced {synced} words to Anki.{' ' + str(skipped) + ' already up-to-date.' if skipped else ''}
         </div>""",
         status_code=200,
     )

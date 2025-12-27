@@ -31,8 +31,9 @@
     {% else %}
 
     <form hx-post="/vocabulary/{{ word.id }}/apply-suggestions"
-          hx-target="#word-{{ word.id }}"
-          hx-swap="outerHTML">
+          hx-target="body"
+          hx-swap="none"
+          hx-on::after-request="if(event.detail.successful) window.location.reload()">
 
         <table class="diff-table">
             <thead>
@@ -84,11 +85,8 @@
                 Deselect All
             </button>
             <button type="submit" class="primary">Apply Selected</button>
-            <button type="button" class="outline"
-                    hx-get="/vocabulary/{{ word.id }}/edit"
-                    hx-target="#word-{{ word.id }}"
-                    hx-swap="outerHTML">
-                Cancel
+            <button type="button" class="outline" onclick="this.closest('.diff-view').remove()">
+                Dismiss
             </button>
         </div>
     </form>

@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+
+{% block title %}{{ word.display_word }} - VocabExt{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ul class="breadcrumb">
+        <li><a href="/vocabulary">Vocabulary</a></li>
+        <li>{{ word.display_word }}</li>
+    </ul>
+</nav>
+
+<header class="detail-header">
+    <hgroup>
+        <h1>{{ word.display_word }}</h1>
+        <p>
+            <span class="pos-tag">{{ word.pos }}</span>
+            <span class="version-badge">Version {{ word.current_version }}</span>
+            {% if word.is_synced %}
+                {% if word.needs_sync %}
+                <span class="status-badge needs-sync">Needs re-sync</span>
+                {% else %}
+                <span class="status-badge synced">Synced</span>
+                {% endif %}
+            {% else %}
+            <span class="status-badge unsynced">Not synced</span>
+            {% endif %}
+        </p>
+    </hgroup>
+</header>
+
+{% if error %}
+<div class="edit-error">{{ error }}</div>
+{% endif %}
+
+<div class="detail-layout">
+    <section class="edit-section">
+        <h2>Edit Word</h2>
+        <form hx-put="/vocabulary/{{ word.id }}"
+              hx-swap="none">
+            <div class="edit-form">
+                <div class="edit-fields">
+                    <label>
+                        Lemma
+                        <input type="text" name="lemma" value="{{ word.lemma }}" required>
+                    </label>
+
+                    {% if word.pos == 'NOUN' %}
+                    <label>
+                        Gender
+                        <select name="gender">
+                            <option value="">-</option>
+                            <option value="der" {% if word.gender == 'der' %}selected{% endif %}>der</option>
+                            <option value="die" {% if word.gender == 'die' %}selected{% endif %}>die</option>
+                            <option value="das" {% if word.gender == 'das' %}selected{% endif %}>das</option>
+                        </select>
+                    </label>
+                    <label>
+                        Plural
+                        <input type="text" name="plural" value="{{ word.plural or '' }}">
+                    </label>
+                    {% elif word.pos == 'VERB' %}
+                    <label>
+                        Preterite
+                        <input type="text" name="preterite" value="{{ word.preterite or '' }}">
+                    </label>
+                    <label>
+                        Past Participle
+                        <input type="text" name="past_participle" value="{{ word.past_participle or '' }}">
+                    </label>
+                    <label>
+                        Auxiliary
+                        <select name="auxiliary">
+                            <option value="">-</option>
+                            <option value="haben" {% if word.auxiliary == 'haben' %}selected{% endif %}>haben</option>
+                            <option value="sein" {% if word.auxiliary == 'sein' %}selected{% endif %}>sein</option>
+                        </select>
+                    </label>
+                    {% endif %}
+
+                    <label class="full-width">
+                        Translations (comma-separated)
+                        <input type="text" name="translations" value="{{ word.translations_list | join(', ') }}">
+                    </label>
+                </div>
+
+                <div class="edit-actions">
+                    <button type="submit">Save Changes</button>
+                    <button type="button" class="secondary outline"
+                            hx-post="/vocabulary/{{ word.id }}/validate"
+                            hx-target="#diff-container"
+                            hx-swap="innerHTML"
+                            hx-indicator="#validate-spinner">
+                        Validate with LLM
+                    </button>
+                    <span id="validate-spinner" class="htmx-indicator">Validating...</span>
+                    <a href="/vocabulary" role="button" class="outline">Back to List</a>
+                </div>
+            </div>
+        </form>
+
+        <div id="diff-container"></div>
+    </section>
+
+    <aside class="history-section">
+        <h2>Version History</h2>
+        <div id="version-history"
+             hx-get="/vocabulary/{{ word.id }}/history"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+            <p class="htmx-indicator">Loading history...</p>
+        </div>
+        <div id="version-comparison"></div>
+    </aside>
+</div>
+
+<section class="danger-zone">
+    <h3>Danger Zone</h3>
+    <button class="delete-btn"
+            hx-delete="/vocabulary/{{ word.id }}"
+            hx-confirm="Delete '{{ word.display_word }}'? This will also delete all version history and cannot be undone."
+            hx-target="body"
+            hx-swap="none"
+            hx-on::after-request="if(event.detail.successful) window.location.href='/vocabulary'">
+        Delete Word
+    </button>
+</section>
+{% endblock %}

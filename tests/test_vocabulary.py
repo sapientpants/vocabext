@@ -80,8 +80,10 @@ class TestEditWord:
                 "plural": "Arbeiten",
                 "translations": "work, job",
             },
+            follow_redirects=False,
         )
-        assert response.status_code == 200
+        # Now returns 303 redirect to detail page (versioning feature)
+        assert response.status_code == 303
 
         await async_session.refresh(word)
         assert word.gender == "die"
@@ -103,8 +105,10 @@ class TestEditWord:
                 "auxiliary": "haben",
                 "translations": "to work",
             },
+            follow_redirects=False,
         )
-        assert response.status_code == 200
+        # Now returns 303 redirect to detail page (versioning feature)
+        assert response.status_code == 303
 
         await async_session.refresh(word)
         assert word.preterite == "arbeitete"
@@ -129,8 +133,10 @@ class TestEditWord:
         response = await async_client.put(
             f"/vocabulary/{word.id}",
             data={"lemma": "Arbeit", "translations": "new translation"},
+            follow_redirects=False,
         )
-        assert response.status_code == 200
+        # Now returns 303 redirect to detail page (versioning feature)
+        assert response.status_code == 303
 
         await async_session.refresh(word)
         assert word.anki_synced_at is None
@@ -284,8 +290,10 @@ class TestApplySuggestions:
                 "suggested_plural": "Arbeiten",
                 # translations not selected
             },
+            follow_redirects=False,
         )
-        assert response.status_code == 200
+        # Now returns 303 redirect to detail page (versioning feature)
+        assert response.status_code == 303
 
         await async_session.refresh(word)
         assert word.gender == "die"
@@ -304,8 +312,10 @@ class TestApplySuggestions:
                 "apply_translations": "1",
                 "suggested_translations": "work,job,labor",
             },
+            follow_redirects=False,
         )
-        assert response.status_code == 200
+        # Now returns 303 redirect to detail page (versioning feature)
+        assert response.status_code == 303
 
         await async_session.refresh(word)
         assert word.translations_list == ["work", "job", "labor"]
@@ -329,8 +339,281 @@ class TestApplySuggestions:
         response = await async_client.post(
             f"/vocabulary/{word.id}/apply-suggestions",
             data={"apply_gender": "1", "suggested_gender": "die"},
+            follow_redirects=False,
         )
-        assert response.status_code == 200
+        # Now returns 303 redirect to detail page (versioning feature)
+        assert response.status_code == 303
 
         await async_session.refresh(word)
         assert word.anki_synced_at is None
+
+
+class TestVocabularyFilters:
+    """Tests for vocabulary list filters."""
+
+    @pytest.mark.asyncio
+    async def test_filter_synced(self, async_client: AsyncClient, async_session: AsyncSession):
+        """Should filter by sync status."""
+        from datetime import datetime, timezone
+
+        synced = Word(
+            lemma="Synced",
+            pos="NOUN",
+            anki_note_id=123,
+            anki_synced_at=datetime.now(timezone.utc),
+        )
+        unsynced = Word(lemma="Unsynced", pos="NOUN")
+        async_session.add_all([synced, unsynced])
+        await async_session.commit()
+
+        response = await async_client.get("/vocabulary?sync_status=synced")
+        assert response.status_code == 200
+        assert "Synced" in response.text
+        # Unsynced word should not be in filtered result
+        assert response.text.count("word-row") == 1
+
+    @pytest.mark.asyncio
+    async def test_filter_unsynced(self, async_client: AsyncClient, async_session: AsyncSession):
+        """Should filter by unsynced status."""
+        from datetime import datetime, timezone
+
+        synced = Word(
+            lemma="Synced",
+            pos="NOUN",
+            anki_note_id=123,
+            anki_synced_at=datetime.now(timezone.utc),
+        )
+        unsynced = Word(lemma="Unsynced", pos="NOUN")
+        async_session.add_all([synced, unsynced])
+        await async_session.commit()
+
+        response = await async_client.get("/vocabulary?sync_status=unsynced")
+        assert response.status_code == 200
+        assert "Unsynced" in response.text
+
+    @pytest.mark.asyncio
+    async def test_filter_version_v1(self, async_client: AsyncClient, async_session: AsyncSession):
+        """Should filter by version v1."""
+        v1_word = Word(lemma="V1Word", pos="NOUN", current_version=1)
+        v2_word = Word(lemma="V2Word", pos="NOUN", current_version=2)
+        async_session.add_all([v1_word, v2_word])
+        await async_session.commit()
+
+        response = await async_client.get("/vocabulary?version=v1")
+        assert response.status_code == 200
+        assert "V1Word" in response.text
+
+    @pytest.mark.asyncio
+    async def test_filter_version_v2plus(
+        self, async_client: AsyncClient, async_session: AsyncSession
+    ):
+        """Should filter by version v2+."""
+        v1_word = Word(lemma="V1Word", pos="NOUN", current_version=1)
+        v2_word = Word(lemma="V2Word", pos="NOUN", current_version=2)
+        async_session.add_all([v1_word, v2_word])
+        await async_session.commit()
+
+        response = await async_client.get("/vocabulary?version=v2%2B")
+        assert response.status_code == 200
+        assert "V2Word" in response.text
+
+    @pytest.mark.asyncio
+    async def test_filter_needs_review(
+        self, async_client: AsyncClient, async_session: AsyncSession
+    ):
+        """Should filter by review status."""
+        needs_review = Word(
+            lemma="NeedsReview", pos="NOUN", needs_review=True, review_reason="Test"
+        )
+        reviewed = Word(lemma="Reviewed", pos="NOUN", needs_review=False)
+        async_session.add_all([needs_review, reviewed])
+        await async_session.commit()
+
+        response = await async_client.get("/vocabulary?review_status=needs_review")
+        assert response.status_code == 200
+        assert "NeedsReview" in response.text
+
+    @pytest.mark.asyncio
+    async def test_filter_reviewed(self, async_client: AsyncClient, async_session: AsyncSession):
+        """Should filter by reviewed status."""
+        needs_review = Word(
+            lemma="NeedsReview", pos="NOUN", needs_review=True, review_reason="Test"
+        )
+        reviewed = Word(lemma="Reviewed", pos="NOUN", needs_review=False)
+        async_session.add_all([needs_review, reviewed])
+        await async_session.commit()
+
+        response = await async_client.get("/vocabulary?review_status=reviewed")
+        assert response.status_code == 200
+        assert "Reviewed" in response.text
+
+    @pytest.mark.asyncio
+    async def test_filter_updated_within(
+        self, async_client: AsyncClient, async_session: AsyncSession
+    ):
+        """Should filter by updated_within."""
+        recent = Word(
+            lemma="Recent",
+            pos="NOUN",
+        )
+        async_session.add(recent)
+        await async_session.commit()
+
+        response = await async_client.get("/vocabulary?updated_within=1")
+        assert response.status_code == 200
+        assert "Recent" in response.text
+
+    @pytest.mark.asyncio
+    async def test_filter_needs_resync(
+        self, async_client: AsyncClient, async_session: AsyncSession
+    ):
+        """Should filter by needs_resync status."""
+        from datetime import datetime, timezone
+
+        # Synced word (has note_id AND synced_at)
+        synced = Word(
+            lemma="Synced",
+            pos="NOUN",
+            anki_note_id=123,
+            anki_synced_at=datetime.now(timezone.utc),
+        )
+        # Needs resync (has note_id but no synced_at - was modified)
+        needs_resync = Word(
+            lemma="NeedsResync",
+            pos="NOUN",
+            anki_note_id=456,
+            anki_synced_at=None,
+        )
+        async_session.add_all([synced, needs_resync])
+        await async_session.commit()
+
+        response = await async_client.get("/vocabulary?sync_status=needs_resync")
+        assert response.status_code == 200
+        assert "NeedsResync" in response.text
+        # Synced word should not be in needs_resync results
+        assert response.text.count("word-row") == 1
+
+
+class TestBuildFilteredQuery:
+    """Tests for build_filtered_query helper."""
+
+    def test_default_order(self):
+        """Should order by lemma by default."""
+        from app.routes.vocabulary import build_filtered_query
+
+        stmt = build_filtered_query()
+        # The query should have order_by
+        assert str(stmt).find("ORDER BY") != -1
+
+    def test_random_order(self):
+        """Should order randomly when specified."""
+        from app.routes.vocabulary import build_filtered_query
+
+        stmt = build_filtered_query(random_order=True)
+        # The query should have random() in ORDER BY
+        query_str = str(stmt)
+        assert "ORDER BY" in query_str
+
+
+class TestBatchValidationHelpers:
+    """Tests for batch validation helper functions."""
+
+    @pytest.mark.asyncio
+    async def test_apply_enrichment_modified(self, async_session: AsyncSession):
+        """Should return 'modified' when word is updated."""
+        from app.routes.vocabulary import apply_enrichment_to_word
+
+        word = Word(lemma="Test", pos="NOUN")
+        async_session.add(word)
+        await async_session.commit()
+        await async_session.refresh(word)
+
+        enrichment = EnrichmentResult(
+            lemma="Test",
+            gender="das",
+            translations=["test"],
+        )
+
+        result = await apply_enrichment_to_word(word, enrichment, async_session)
+        assert result == "modified"
+        assert word.gender == "das"
+
+    @pytest.mark.asyncio
+    async def test_apply_enrichment_skipped(self, async_session: AsyncSession):
+        """Should return 'skipped' when no changes."""
+        from app.routes.vocabulary import apply_enrichment_to_word
+
+        word = Word(lemma="Test", pos="NOUN", gender="das")
+        async_session.add(word)
+        await async_session.commit()
+        await async_session.refresh(word)
+
+        enrichment = EnrichmentResult(
+            lemma="Test",
+            gender="das",
+            translations=None,
+        )
+
+        result = await apply_enrichment_to_word(word, enrichment, async_session)
+        assert result == "skipped"
+
+    @pytest.mark.asyncio
+    async def test_apply_enrichment_flagged_duplicate(self, async_session: AsyncSession):
+        """Should return 'flagged' when lemma would be duplicate."""
+        from app.routes.vocabulary import apply_enrichment_to_word
+
+        # Create existing word
+        existing = Word(lemma="Existing", pos="NOUN")
+        async_session.add(existing)
+        await async_session.commit()
+
+        # Create word that will be suggested to change to existing lemma
+        word = Word(lemma="Test", pos="NOUN")
+        async_session.add(word)
+        await async_session.commit()
+        await async_session.refresh(word)
+
+        enrichment = EnrichmentResult(
+            lemma="Existing",  # Same as existing word
+            gender="das",
+            translations=["test"],
+        )
+
+        result = await apply_enrichment_to_word(word, enrichment, async_session)
+        assert result == "flagged"
+        assert word.needs_review is True
+        assert "duplicate" in word.review_reason.lower()
+
+    def test_sse_event_format(self):
+        """Should format SSE events correctly."""
+        from app.routes.vocabulary import sse_event
+
+        event = sse_event("progress", completed=5, total=10)
+        assert 'data: {"type": "progress"' in event
+        assert '"completed": 5' in event
+        assert '"total": 10' in event
+        assert event.endswith("\n\n")
+
+    @pytest.mark.asyncio
+    async def test_check_duplicate_lemma(self, async_session: AsyncSession):
+        """Should detect duplicate lemmas."""
+        from app.routes.vocabulary import check_duplicate_lemma
+
+        word = Word(lemma="Test", pos="NOUN")
+        async_session.add(word)
+        await async_session.commit()
+        await async_session.refresh(word)
+
+        # Same lemma and POS but different ID should be duplicate
+        is_duplicate = await check_duplicate_lemma(async_session, "Test", "NOUN", exclude_id=999)
+        assert is_duplicate is True
+
+        # Same word ID should not be duplicate
+        is_duplicate = await check_duplicate_lemma(
+            async_session, "Test", "NOUN", exclude_id=word.id
+        )
+        assert is_duplicate is False
+
+        # Different POS should not be duplicate
+        is_duplicate = await check_duplicate_lemma(async_session, "Test", "VERB", exclude_id=999)
+        assert is_duplicate is False
