@@ -1,5 +1,6 @@
 """Vocabulary browsing and management routes."""
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
@@ -203,14 +204,16 @@ async def apply_enrichment_to_word(
     """
     Apply LLM enrichment to word, creating version if changed.
 
-    Returns: 'modified', 'flagged', or 'skipped'
+    Returns: 'modified', 'deleted', or 'skipped'
     """
-    # Check for duplicate lemma - FLAG instead of skip
+    # Check for duplicate lemma - DELETE the word if it would create a duplicate
     if enrichment.lemma and enrichment.lemma != word.lemma:
         if await check_duplicate_lemma(session, enrichment.lemma, word.pos, word.id):
-            word.needs_review = True
-            word.review_reason = f"LLM suggests duplicate lemma: {enrichment.lemma}"
-            return "flagged"
+            logger.info(
+                f"Deleting duplicate: '{word.lemma}' -> '{enrichment.lemma}' already exists"
+            )
+            await session.delete(word)
+            return "deleted"
 
     # Capture old values
     old_values = {
@@ -338,13 +341,16 @@ async def batch_validate_stream(  # pragma: no cover
     updated_within: str = Query("", description="Filter: days since update"),
     review_status: str = Query("", description="Filter: needs_review/reviewed"),
 ) -> StreamingResponse:
-    """Stream batch validation progress via SSE."""
+    """Stream batch validation progress via SSE.
+
+    Uses asyncio.as_completed() to process words concurrently while
+    streaming progress. The global semaphore limits to 20 parallel API calls.
+    """
 
     async def event_generator() -> AsyncGenerator[str, None]:
         enricher = Enricher()
 
         async with async_session() as session:
-            # Build query with same filters as list_vocabulary
             stmt = build_filtered_query(
                 search,
                 pos,
@@ -355,50 +361,82 @@ async def batch_validate_stream(  # pragma: no cover
                 random_order=True,
             )
             result = await session.execute(stmt)
-            words = result.scalars().all()
+            words = list(result.scalars().all())
 
             total = len(words)
-            modified, skipped, flagged, errors = 0, 0, 0, 0
+            if total == 0:
+                yield sse_event("complete", modified=0, skipped=0, flagged=0, errors=0)
+                return
 
-            for i, word in enumerate(words):
-                # Check if client disconnected
-                if await request.is_disconnected():
-                    logger.info("Batch validation cancelled by client")
-                    break
+            logger.info(f"Batch validation starting: {total} words")
+            yield sse_event("started", total=total)
 
-                yield sse_event("progress", completed=i, total=total, word=word.display_word)
+            modified, skipped, deleted, errors = 0, 0, 0, 0
+            completed = 0
 
+            async def enrich_word(word: Word) -> tuple[Word, EnrichmentResult | Exception]:
+                """Enrich a single word, return (word, result) tuple."""
                 try:
-                    # Validate + enrich
                     enrichment = await enricher.validate_and_enrich(word.lemma, word.pos)
-
-                    if enrichment.error:
-                        errors += 1
-                        yield sse_event("error", word=word.display_word, error=enrichment.error)
-                    else:
-                        # Apply if changed
-                        result_status = await apply_enrichment_to_word(word, enrichment, session)
-
-                        if result_status == "modified":
-                            modified += 1
-                        elif result_status == "flagged":
-                            flagged += 1
-                        else:  # "skipped"
-                            skipped += 1
-
+                    return (word, enrichment)
                 except Exception as e:
-                    errors += 1
-                    logger.exception(f"Batch validation error for {word.display_word}")
-                    yield sse_event("error", word=word.display_word, error=str(e))
+                    logger.error(f"Task error for {word.lemma}: {e}")
+                    return (word, e)
 
-                # Commit after EACH word (allows resume on interrupt)
+            # Fire all tasks - semaphore in validate_and_enrich limits concurrency
+            tasks = [asyncio.create_task(enrich_word(word)) for word in words]
+
+            for coro in asyncio.as_completed(tasks):
+                # Check for client disconnect periodically
+                if completed % 100 == 0 and await request.is_disconnected():
+                    logger.info("Batch validation cancelled by client")
+                    for task in tasks:
+                        task.cancel()
+                    return
+
+                word, enrich_result = await coro
+                completed += 1
+
+                # Log progress every 50 words
+                if completed % 50 == 0 or completed == total:
+                    logger.info(f"Batch validation: {completed}/{total} ({word.display_word})")
+
+                yield sse_event(
+                    "progress", completed=completed, total=total, word=word.display_word
+                )
+
+                if isinstance(enrich_result, Exception):
+                    errors += 1
+                    yield sse_event("error", word=word.display_word, error=str(enrich_result))
+                elif enrich_result.error:
+                    errors += 1
+                    yield sse_event("error", word=word.display_word, error=enrich_result.error)
+                else:
+                    try:
+                        status = await apply_enrichment_to_word(word, enrich_result, session)
+                        if status == "modified":
+                            modified += 1
+                        elif status == "deleted":
+                            deleted += 1
+                        else:
+                            skipped += 1
+                    except Exception as e:
+                        errors += 1
+                        logger.exception(f"Error applying enrichment for {word.display_word}")
+                        yield sse_event("error", word=word.display_word, error=str(e))
+
+                # Commit after each word
                 await session.commit()
 
+            logger.info(
+                f"Batch validation complete: {modified} modified, {skipped} skipped, "
+                f"{deleted} deleted, {errors} errors"
+            )
             yield sse_event(
                 "complete",
                 modified=modified,
                 skipped=skipped,
-                flagged=flagged,
+                deleted=deleted,
                 errors=errors,
             )
 
@@ -408,7 +446,7 @@ async def batch_validate_stream(  # pragma: no cover
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "X-Accel-Buffering": "no",
         },
     )
 

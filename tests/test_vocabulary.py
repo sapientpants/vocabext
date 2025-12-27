@@ -551,15 +551,14 @@ class TestBatchValidationHelpers:
         enrichment = EnrichmentResult(
             lemma="Test",
             gender="das",
-            translations=None,
         )
 
         result = await apply_enrichment_to_word(word, enrichment, async_session)
         assert result == "skipped"
 
     @pytest.mark.asyncio
-    async def test_apply_enrichment_flagged_duplicate(self, async_session: AsyncSession):
-        """Should return 'flagged' when lemma would be duplicate."""
+    async def test_apply_enrichment_deleted_duplicate(self, async_session: AsyncSession):
+        """Should return 'deleted' and delete word when lemma would be duplicate."""
         from app.routes.vocabulary import apply_enrichment_to_word
 
         # Create existing word
@@ -572,6 +571,7 @@ class TestBatchValidationHelpers:
         async_session.add(word)
         await async_session.commit()
         await async_session.refresh(word)
+        word_id = word.id
 
         enrichment = EnrichmentResult(
             lemma="Existing",  # Same as existing word
@@ -580,9 +580,12 @@ class TestBatchValidationHelpers:
         )
 
         result = await apply_enrichment_to_word(word, enrichment, async_session)
-        assert result == "flagged"
-        assert word.needs_review is True
-        assert "duplicate" in word.review_reason.lower()
+        assert result == "deleted"
+
+        # Verify word was deleted
+        await async_session.commit()
+        deleted_word = await async_session.get(Word, word_id)
+        assert deleted_word is None
 
     def test_sse_event_format(self):
         """Should format SSE events correctly."""

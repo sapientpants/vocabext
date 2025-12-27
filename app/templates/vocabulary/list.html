@@ -107,7 +107,10 @@ function startBatchValidation() {
     eventSource.onmessage = (event) => {
         const data = JSON.parse(event.data);
 
-        if (data.type === 'progress') {
+        if (data.type === 'started') {
+            document.getElementById('progress-text').textContent =
+                `Processing ${data.total} words...`;
+        } else if (data.type === 'progress') {
             document.getElementById('progress-bar').value = (data.completed / data.total) * 100;
             document.getElementById('progress-text').textContent =
                 `${data.completed}/${data.total}: ${data.word}`;
@@ -117,7 +120,7 @@ function startBatchValidation() {
             eventSource.close();
             document.getElementById('progress-text').textContent = 'Complete!';
             document.getElementById('progress-stats').textContent =
-                `Modified: ${data.modified} | Skipped: ${data.skipped} | Flagged: ${data.flagged} | Errors: ${data.errors}`;
+                `Modified: ${data.modified} | Skipped: ${data.skipped} | Deleted: ${data.deleted} | Errors: ${data.errors}`;
             document.getElementById('batch-validate-btn').disabled = false;
             // Reload page after delay to show updated data
             setTimeout(() => location.reload(), 3000);

@@ -30,6 +30,10 @@ def setup_logging() -> None:
     console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
     root_logger.addHandler(console_handler)
 
+    # Suppress verbose third-party loggers
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
     # File handler (optional)
     if settings.log_file_enabled:
         log_path = settings.resolved_log_file_path

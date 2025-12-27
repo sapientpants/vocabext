@@ -213,3 +213,16 @@ class AnkiService:
             }
         except Exception as e:
             return {"available": False, "error": str(e)}
+
+    async def get_all_note_ids(self) -> list[int]:
+        """Get all note IDs in the vocabulary deck."""
+        query = f'"deck:{self.deck}" "note:{self.note_type}"'
+        note_ids: list[int] = await self._invoke("findNotes", query=query)
+        return note_ids
+
+    async def delete_notes(self, note_ids: list[int]) -> None:
+        """Delete notes from Anki."""
+        if not note_ids:
+            return
+        await self._invoke("deleteNotes", notes=note_ids)
+        logger.info(f"Deleted {len(note_ids)} orphaned notes from Anki")
