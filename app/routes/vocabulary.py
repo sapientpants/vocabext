@@ -528,6 +528,7 @@ async def update_word(
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     """Update a word's metadata, creating a new version if changed."""
+    logger.info(f"update_word called: word_id={word_id}, lemma={lemma!r}, gender={gender!r}")
     stmt = select(Word).where(Word.id == word_id).options(selectinload(Word.versions))
     result = await session.execute(stmt)
     word = result.scalar_one_or_none()
@@ -577,6 +578,7 @@ async def update_word(
         auxiliary_val,
         translations_json,
     )
+    logger.info(f"has_changes={has_changes}, word.lemma={word.lemma!r}, new_lemma={lemma!r}")
 
     if has_changes:
         # Create version snapshot of current state before updating
