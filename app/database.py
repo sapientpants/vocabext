@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.pool import Pool
+from sqlalchemy.pool import NullPool, Pool
 
 from app.config import settings
 
@@ -17,10 +17,12 @@ class Base(DeclarativeBase):
     pass
 
 
-# Create async engine with foreign key support
+# Create async engine with NullPool to avoid connection pooling issues with CLI
+# NullPool creates fresh connections and closes them immediately after use
 engine = create_async_engine(
     f"sqlite+aiosqlite:///{settings.db_path}",
     echo=False,
+    poolclass=NullPool,
 )
 
 
