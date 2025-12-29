@@ -6,13 +6,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.database import Base, get_session
-from app.main import app
+from app.database import Base
 
 
 @pytest.fixture(scope="session")
@@ -46,34 +42,6 @@ async def async_session(async_engine) -> AsyncGenerator[AsyncSession, None]:
     )
     async with async_session_maker() as session:
         yield session
-
-
-@pytest.fixture
-def test_app(async_session: AsyncSession) -> FastAPI:
-    """Create a test FastAPI application."""
-
-    async def override_get_session() -> AsyncGenerator[AsyncSession, None]:
-        yield async_session
-
-    app.dependency_overrides[get_session] = override_get_session
-    yield app
-    app.dependency_overrides.clear()
-
-
-@pytest.fixture
-def client(test_app: FastAPI) -> TestClient:
-    """Create a synchronous test client."""
-    return TestClient(test_app)
-
-
-@pytest.fixture
-async def async_client(test_app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
-    """Create an asynchronous test client."""
-    async with AsyncClient(
-        transport=ASGITransport(app=test_app),
-        base_url="http://test",
-    ) as client:
-        yield client
 
 
 @pytest.fixture
