@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 import typer
@@ -17,6 +19,15 @@ from app.cli.utils.progress import create_progress
 from app.database import async_session
 from app.models import Word, WordVersion
 from app.services.enricher import Enricher, EnrichmentResult
+
+logger = logging.getLogger(__name__)
+
+
+def _escape_like_pattern(s: str) -> str:
+    """Escape special characters for SQL LIKE patterns."""
+    # Escape %, _, and \ which are special in LIKE
+    return re.sub(r"([%_\\])", r"\\\1", s)
+
 
 app = typer.Typer(
     name="vocab",
@@ -42,7 +53,8 @@ def build_filtered_query(
         stmt = stmt.order_by(Word.lemma)
 
     if search:
-        stmt = stmt.where(Word.lemma.ilike(f"%{search}%"))
+        escaped_search = _escape_like_pattern(search)
+        stmt = stmt.where(Word.lemma.ilike(f"%{escaped_search}%"))
     if pos:
         stmt = stmt.where(Word.pos == pos)
     if sync_status == "synced":
@@ -287,11 +299,21 @@ async def _validate_words(search: str, pos: str, limit: int) -> None:
 
                 if isinstance(enrich_result, Exception):
                     errors += 1
+                    logger.error(
+                        "Failed to enrich '%s' (%s): %s",
+                        word.display_word,
+                        word.pos,
+                        enrich_result,
+                        exc_info=False,
+                    )
                     progress.update(
                         task_id, advance=1, description=f"[red]Error: {word.display_word}[/]"
                     )
                 elif enrich_result.error:
                     errors += 1
+                    logger.warning(
+                        "Enrichment error for '%s': %s", word.display_word, enrich_result.error
+                    )
                     progress.update(
                         task_id, advance=1, description=f"[red]Error: {word.display_word}[/]"
                     )
@@ -319,8 +341,14 @@ async def _validate_words(search: str, pos: str, limit: int) -> None:
                                 advance=1,
                                 description=f"[dim]Skipped: {word.display_word}[/]",
                             )
-                    except Exception:
+                    except Exception as e:
                         errors += 1
+                        logger.error(
+                            "Failed to apply enrichment to '%s': %s",
+                            word.display_word,
+                            e,
+                            exc_info=True,
+                        )
                         progress.update(
                             task_id, advance=1, description=f"[red]Error: {word.display_word}[/]"
                         )

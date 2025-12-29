@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.pool import NullPool, Pool
+from sqlalchemy.pool import NullPool
 
 from app.config import settings
 
@@ -27,7 +27,8 @@ engine = create_async_engine(
 
 
 # Enable foreign key constraints for SQLite connections
-@event.listens_for(Pool, "connect")
+# Use sync_engine to properly intercept aiosqlite connections
+@event.listens_for(engine.sync_engine, "connect")
 def _set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
     """Enable foreign key enforcement for SQLite."""
     cursor = dbapi_connection.cursor()

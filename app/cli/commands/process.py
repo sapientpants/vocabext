@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -10,9 +11,6 @@ import typer
 from sqlalchemy import select
 
 from app.cli.utils.async_runner import run_async
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
 from app.cli.utils.console import console, error_console
 from app.cli.utils.progress import create_progress, create_simple_progress
 from app.config import settings
@@ -21,6 +19,11 @@ from app.models import Document, Extraction, Word
 from app.services.enricher import Enricher
 from app.services.extractor import TextExtractor
 from app.services.tokenizer import Tokenizer
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(
     name="process",
@@ -168,8 +171,20 @@ async def _process_file(file_path: Path, skip_enrichment: bool) -> None:
                                 )
                                 if enrichment.error:
                                     errors += 1
-                            except Exception:
+                                    logger.warning(
+                                        "Enrichment error for '%s': %s",
+                                        token.lemma,
+                                        enrichment.error,
+                                    )
+                            except Exception as e:
                                 errors += 1
+                                logger.error(
+                                    "Failed to enrich '%s' (%s): %s",
+                                    token.lemma,
+                                    token.pos,
+                                    e,
+                                    exc_info=True,
+                                )
 
                         new_words += 1
                         extraction = Extraction(
