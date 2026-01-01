@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from sqlalchemy import ForeignKey, Index, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -13,38 +13,6 @@ from app.database import Base
 def _utc_now() -> datetime:
     """Return current UTC time (replaces deprecated datetime.utcnow())."""
     return datetime.now(timezone.utc)
-
-
-class Document(Base):
-    """Uploaded document for vocabulary extraction."""
-
-    __tablename__ = "documents"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    filename: Mapped[str] = mapped_column(Text)
-    content_hash: Mapped[str] = mapped_column(Text, unique=True)
-    status: Mapped[str] = mapped_column(
-        Text, default="processing"
-    )  # processing, pending_review, reviewed, error
-    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=_utc_now)
-
-    # Relationships
-    extractions: Mapped[list["Extraction"]] = relationship(
-        back_populates="document",
-        cascade="all, delete-orphan",
-    )
-
-    @property
-    def pending_count(self) -> int:
-        """Count of pending extractions."""
-        return sum(1 for e in self.extractions if e.status == "pending")
-
-    @property
-    def duplicate_count(self) -> int:
-        """Count of duplicate extractions."""
-        return sum(1 for e in self.extractions if e.status == "duplicate")
 
 
 class Word(Base):
@@ -68,12 +36,18 @@ class Word(Base):
     past_participle: Mapped[str | None] = mapped_column(Text, nullable=True)  # verbs only
     auxiliary: Mapped[str | None] = mapped_column(Text, nullable=True)  # haben/sein (verbs only)
     translations: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+
+    # Dictionary-grounded fields
+    definition_de: Mapped[str | None] = mapped_column(Text, nullable=True)  # German definition
+    synonyms: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    frequency: Mapped[float | None] = mapped_column(nullable=True)  # DWDS 0-6 scale
+    ipa: Mapped[str | None] = mapped_column(Text, nullable=True)  # Pronunciation
+    lemma_source: Mapped[str | None] = mapped_column(Text, nullable=True)  # "spacy", "dwds", etc.
+    dictionary_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # Link to entry
+
     anki_note_id: Mapped[int | None] = mapped_column(nullable=True)
     anki_synced_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=_utc_now)
-
-    # Relationships
-    extractions: Mapped[list["Extraction"]] = relationship(back_populates="word")
 
     @property
     def translations_list(self) -> list[str]:
@@ -135,13 +109,12 @@ class Word(Base):
         """Check if word has been modified since last sync."""
         if self.anki_synced_at is None:
             return True
+        # If synced and no versions, no changes to sync
         if not self.versions:
-            return True
+            return False
         # Check if latest version was created after last sync
-        latest = self.versions[0] if self.versions else None
-        if latest and latest.created_at > self.anki_synced_at:
-            return True
-        return False
+        latest = self.versions[0]
+        return bool(latest.created_at > self.anki_synced_at)
 
 
 class WordVersion(Base):
@@ -164,6 +137,14 @@ class WordVersion(Base):
     auxiliary: Mapped[str | None] = mapped_column(Text, nullable=True)
     translations: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Dictionary-grounded fields (snapshot)
+    definition_de: Mapped[str | None] = mapped_column(Text, nullable=True)
+    synonyms: Mapped[str | None] = mapped_column(Text, nullable=True)
+    frequency: Mapped[float | None] = mapped_column(nullable=True)
+    ipa: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lemma_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dictionary_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Version metadata
     created_at: Mapped[datetime] = mapped_column(default=_utc_now)
 
@@ -182,21 +163,35 @@ class WordVersion(Base):
             return []
 
 
-class Extraction(Base):
-    """Word extraction from a document, pending review."""
+class WordEvent(Base):
+    """
+    Immutable event log for word operations (event sourcing).
 
-    __tablename__ = "extractions"
+    Events are retained indefinitely to support:
+    - Full audit trail of vocabulary changes
+    - Restoring deleted words via revert_to_event()
+    - Debugging and analytics
+
+    Retention Policy:
+    - Events are never automatically deleted
+    - Manual cleanup can be done via SQL if storage becomes a concern
+    - Example: DELETE FROM word_events WHERE event_at < datetime('now', '-1 year')
+    """
+
+    __tablename__ = "word_events"
     __table_args__ = (
-        # Composite index for document extraction queries
-        Index("ix_extractions_document_status", "document_id", "status"),
-        # Index for word lookups
-        Index("ix_extractions_word_id", "word_id"),
+        Index("ix_word_events_word_id", "word_id"),
+        Index("ix_word_events_event_at", "event_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), index=True)
-    word_id: Mapped[int | None] = mapped_column(ForeignKey("words.id"), nullable=True)
-    surface_form: Mapped[str] = mapped_column(Text)
+    # No FK constraint - word may be deleted but events are retained for audit trail
+    # Index is defined in __table_args__ with explicit name
+    word_id: Mapped[int] = mapped_column()
+    event_type: Mapped[str] = mapped_column(Text)  # CREATED, MODIFIED, DELETED, RESTORED
+    event_at: Mapped[datetime] = mapped_column(default=_utc_now)
+
+    # Full snapshot of word state at this event
     lemma: Mapped[str] = mapped_column(Text)
     pos: Mapped[str] = mapped_column(Text)
     gender: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -204,16 +199,20 @@ class Extraction(Base):
     preterite: Mapped[str | None] = mapped_column(Text, nullable=True)
     past_participle: Mapped[str | None] = mapped_column(Text, nullable=True)
     auxiliary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    translations: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
-    context_sentence: Mapped[str | None] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(
-        Text, default="pending", index=True
-    )  # pending, accepted, rejected, duplicate
-    created_at: Mapped[datetime] = mapped_column(default=_utc_now)
+    translations: Mapped[str | None] = mapped_column(Text, nullable=True)
+    definition_de: Mapped[str | None] = mapped_column(Text, nullable=True)
+    synonyms: Mapped[str | None] = mapped_column(Text, nullable=True)
+    frequency: Mapped[float | None] = mapped_column(nullable=True)
+    ipa: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lemma_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dictionary_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Relationships
-    document: Mapped["Document"] = relationship(back_populates="extractions")
-    word: Mapped[Optional["Word"]] = relationship(back_populates="extractions")
+    # Anki sync state at this event
+    anki_note_id: Mapped[int | None] = mapped_column(nullable=True)
+
+    # Event metadata
+    source: Mapped[str] = mapped_column(Text)  # "validate", "edit", "import", "cli"
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     @property
     def translations_list(self) -> list[str]:
@@ -225,28 +224,3 @@ class Extraction(Base):
             return cast(list[str], result)
         except json.JSONDecodeError:
             return []
-
-    @translations_list.setter
-    def translations_list(self, value: list[str]) -> None:
-        """Set translations from a Python list."""
-        self.translations = json.dumps(value)
-
-    @property
-    def display_word(self) -> str:
-        """Get word with article for nouns."""
-        if self.pos == "NOUN" and self.gender:
-            return f"{self.gender} {self.lemma}"
-        return str(self.lemma)
-
-    @property
-    def grammar_info(self) -> str:
-        """Get formatted grammar information."""
-        parts: list[str] = []
-        if self.plural:
-            parts.append(f"pl: {self.plural}")
-        if self.preterite:
-            parts.append(f"prät: {self.preterite}")
-        if self.past_participle:
-            aux = self.auxiliary or "haben"
-            parts.append(f"pp: {aux} {self.past_participle}")
-        return ", ".join(parts)

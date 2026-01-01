@@ -17,8 +17,16 @@ from app.cli.utils.async_runner import run_async
 from app.cli.utils.console import console, error_console
 from app.cli.utils.progress import create_progress
 from app.database import async_session
-from app.models import Word, WordVersion
+from app.models import Word, WordEvent, WordVersion
+from app.services.dictionary import is_model_loaded, preload_model
 from app.services.enricher import Enricher, EnrichmentResult
+from app.services.events import (
+    get_deleted_words,
+    get_word_history,
+    record_event,
+    revert_to_event,
+    undo_last_change,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,13 +120,21 @@ async def apply_enrichment_to_word(
     word: Word, enrichment: EnrichmentResult, session: AsyncSession
 ) -> str:
     """
-    Apply LLM enrichment to word, creating version if changed.
+    Apply LLM enrichment to word, creating version and event if changed.
 
     Returns: 'modified', 'deleted', or 'skipped'
     """
     # Check for duplicate lemma - DELETE the word if it would create a duplicate
     if enrichment.lemma and enrichment.lemma != word.lemma:
         if await check_duplicate_lemma(session, enrichment.lemma, word.pos, word.id):
+            # Record deletion event BEFORE deleting (captures current state)
+            await record_event(
+                session,
+                word,
+                "DELETED",
+                "validate",
+                f"Duplicate of '{enrichment.lemma}' after lemma correction",
+            )
             await session.delete(word)
             return "deleted"
 
@@ -131,6 +147,12 @@ async def apply_enrichment_to_word(
         "past_participle": word.past_participle,
         "auxiliary": word.auxiliary,
         "translations": word.translations,
+        "lemma_source": word.lemma_source,
+        "frequency": word.frequency,
+        "ipa": word.ipa,
+        "dictionary_url": word.dictionary_url,
+        "definition_de": word.definition_de,
+        "synonyms": word.synonyms,
     }
 
     # Apply new values (only if provided)
@@ -149,6 +171,20 @@ async def apply_enrichment_to_word(
     if enrichment.translations:
         word.translations = json.dumps(enrichment.translations)
 
+    # Apply dictionary-grounded fields (important for idempotency)
+    if enrichment.lemma_source:
+        word.lemma_source = enrichment.lemma_source
+    if enrichment.frequency is not None:
+        word.frequency = enrichment.frequency
+    if enrichment.ipa:
+        word.ipa = enrichment.ipa
+    if enrichment.dictionary_url:
+        word.dictionary_url = enrichment.dictionary_url
+    if enrichment.definition_de:
+        word.definition_de = enrichment.definition_de
+    if enrichment.synonyms:
+        word.synonyms = json.dumps(enrichment.synonyms)
+
     # Check if anything changed
     new_values = {
         "lemma": word.lemma,
@@ -158,6 +194,12 @@ async def apply_enrichment_to_word(
         "past_participle": word.past_participle,
         "auxiliary": word.auxiliary,
         "translations": word.translations,
+        "lemma_source": word.lemma_source,
+        "frequency": word.frequency,
+        "ipa": word.ipa,
+        "dictionary_url": word.dictionary_url,
+        "definition_de": word.definition_de,
+        "synonyms": word.synonyms,
     }
     if old_values == new_values:
         return "skipped"
@@ -182,6 +224,10 @@ async def apply_enrichment_to_word(
     word.anki_synced_at = None
     word.needs_review = False
     word.review_reason = None
+
+    # Record modification event with new state
+    await record_event(session, word, "MODIFIED", "validate", "Enrichment applied")
+
     return "modified"
 
 
@@ -251,18 +297,27 @@ def validate_words(
     search: str = typer.Option("", "--search", "-s", help="Filter by lemma search"),
     pos: str = typer.Option("", "--pos", "-p", help="Filter by POS"),
     all_words: bool = typer.Option(False, "--all", "-a", help="Validate all words"),
-    limit: int = typer.Option(100, "--limit", "-n", help="Maximum words to validate"),
+    limit: int = typer.Option(0, "--limit", "-n", help="Maximum words to validate (0 = no limit)"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would change without applying"
+    ),
 ) -> None:
     """Batch validate words with LLM enrichment."""
     if not all_words and not search and not pos:
         error_console.print("[error]Specify --search, --pos, or use --all to validate all words[/]")
         raise typer.Exit(1)
 
-    run_async(_validate_words(search, pos, limit if not all_words else 0))
+    run_async(_validate_words(search, pos, limit, dry_run))
 
 
-async def _validate_words(search: str, pos: str, limit: int) -> None:
+async def _validate_words(search: str, pos: str, limit: int, dry_run: bool = False) -> None:
     """Async implementation of validate command."""
+    # Pre-load spaCy model before starting (takes ~30-60s on first run)
+    if not is_model_loaded():
+        console.print("[dim]Loading language model...[/]", end="", highlight=False)
+        preload_model()
+        console.print(" [green]done[/]")
+
     enricher = Enricher()
 
     async with async_session() as session:
@@ -276,20 +331,32 @@ async def _validate_words(search: str, pos: str, limit: int) -> None:
             console.print("[dim]No words found matching filters.[/]")
             return
 
-        console.print(f"[info]Validating {len(words)} words...[/]\n")
+        mode_label = "[yellow](DRY RUN)[/] " if dry_run else ""
+        console.print(f"[info]{mode_label}Validating {len(words)} words...[/]\n")
 
         modified, skipped, deleted, errors = 0, 0, 0, 0
+        # Track details for dry-run summary
+        would_delete: list[tuple[Word, str]] = []
+        would_modify: list[tuple[Word, EnrichmentResult]] = []
 
         async def enrich_word(word: Word) -> tuple[Word, EnrichmentResult | Exception]:
             """Enrich a single word, return (word, result) tuple."""
             try:
-                enrichment = await enricher.validate_and_enrich(word.lemma, word.pos)
+                # Use dictionary-based enrichment for more stable lemma validation.
+                # Note: session is not passed to avoid concurrent cache write conflicts.
+                # The spaCy vocabulary is used for validation (in-memory, no DB needed).
+                # Dictionary cache is populated on single-word operations (add, edit).
+                enrichment = await enricher.enrich_with_dictionary(word.lemma, word.pos, context="")
                 return (word, enrichment)
             except Exception as e:
                 return (word, e)
 
-        # Fire all tasks - semaphore in validate_and_enrich limits concurrency
+        # Fire all tasks - semaphore in llm.chat_completion limits concurrency
         tasks = [asyncio.create_task(enrich_word(word)) for word in words]
+
+        def status_description() -> str:
+            """Build a fixed-width status description."""
+            return f"[green]M:{modified}[/] [dim]S:{skipped}[/] [yellow]D:{deleted}[/] [red]E:{errors}[/]"
 
         with create_progress() as progress:
             task_id = progress.add_task("Validating...", total=len(words))
@@ -306,60 +373,108 @@ async def _validate_words(search: str, pos: str, limit: int) -> None:
                         enrich_result,
                         exc_info=False,
                     )
-                    progress.update(
-                        task_id, advance=1, description=f"[red]Error: {word.display_word}[/]"
-                    )
                 elif enrich_result.error:
                     errors += 1
                     logger.warning(
                         "Enrichment error for '%s': %s", word.display_word, enrich_result.error
                     )
-                    progress.update(
-                        task_id, advance=1, description=f"[red]Error: {word.display_word}[/]"
-                    )
                 else:
-                    try:
-                        status = await apply_enrichment_to_word(word, enrich_result, session)
+                    if dry_run:
+                        # Simulate what would happen without applying
+                        status = await _simulate_enrichment(word, enrich_result, session)
                         if status == "modified":
                             modified += 1
-                            progress.update(
-                                task_id,
-                                advance=1,
-                                description=f"[green]Modified: {word.display_word}[/]",
-                            )
+                            would_modify.append((word, enrich_result))
                         elif status == "deleted":
                             deleted += 1
-                            progress.update(
-                                task_id,
-                                advance=1,
-                                description=f"[yellow]Deleted: {word.display_word}[/]",
-                            )
+                            reason = f"Duplicate of '{enrich_result.lemma}'"
+                            would_delete.append((word, reason))
                         else:
                             skipped += 1
-                            progress.update(
-                                task_id,
-                                advance=1,
-                                description=f"[dim]Skipped: {word.display_word}[/]",
+                    else:
+                        try:
+                            status = await apply_enrichment_to_word(word, enrich_result, session)
+                            if status == "modified":
+                                modified += 1
+                            elif status == "deleted":
+                                deleted += 1
+                            else:
+                                skipped += 1
+                        except Exception as e:
+                            errors += 1
+                            logger.error(
+                                "Failed to apply enrichment to '%s': %s",
+                                word.display_word,
+                                e,
+                                exc_info=True,
                             )
-                    except Exception as e:
-                        errors += 1
-                        logger.error(
-                            "Failed to apply enrichment to '%s': %s",
-                            word.display_word,
-                            e,
-                            exc_info=True,
-                        )
-                        progress.update(
-                            task_id, advance=1, description=f"[red]Error: {word.display_word}[/]"
-                        )
 
-                # Commit after each word
-                await session.commit()
+                progress.update(task_id, advance=1, description=status_description())
+
+                # Commit after each word (only if not dry run)
+                if not dry_run:
+                    await session.commit()
 
         console.print()
-        console.print(
-            f"[success]Complete![/] Modified: {modified}, Skipped: {skipped}, Deleted: {deleted}, Errors: {errors}"
-        )
+
+        if dry_run:
+            console.print(
+                f"[yellow]DRY RUN[/] Would modify: {modified}, Would delete: {deleted}, "
+                f"Unchanged: {skipped}, Errors: {errors}"
+            )
+            if would_delete:
+                console.print("\n[bold]Would delete:[/]")
+                for word, reason in would_delete[:10]:
+                    console.print(f"  - {word.display_word} ({word.id}): {reason}")
+                if len(would_delete) > 10:
+                    console.print(f"  ... and {len(would_delete) - 10} more")
+            if would_modify:
+                console.print("\n[bold]Would modify:[/]")
+                for word, enrichment in would_modify[:10]:
+                    changes = []
+                    if enrichment.lemma and enrichment.lemma != word.lemma:
+                        changes.append(f"lemma: {word.lemma} → {enrichment.lemma}")
+                    if enrichment.gender and enrichment.gender != word.gender:
+                        changes.append(f"gender: {word.gender} → {enrichment.gender}")
+                    if enrichment.plural and enrichment.plural != word.plural:
+                        changes.append(f"plural: {word.plural} → {enrichment.plural}")
+                    console.print(
+                        f"  - {word.display_word} ({word.id}): {', '.join(changes) or 'translations updated'}"
+                    )
+                if len(would_modify) > 10:
+                    console.print(f"  ... and {len(would_modify) - 10} more")
+        else:
+            console.print(
+                f"[success]Complete![/] Modified: {modified}, Skipped: {skipped}, "
+                f"Deleted: {deleted}, Errors: {errors}"
+            )
+
+
+async def _simulate_enrichment(
+    word: Word, enrichment: EnrichmentResult, session: AsyncSession
+) -> str:
+    """
+    Simulate what would happen if enrichment were applied, without modifying anything.
+
+    Returns: 'modified', 'deleted', or 'skipped'
+    """
+    # Check for duplicate lemma - would DELETE the word
+    if enrichment.lemma and enrichment.lemma != word.lemma:
+        if await check_duplicate_lemma(session, enrichment.lemma, word.pos, word.id):
+            return "deleted"
+
+    # Check if anything would change
+    would_change = (
+        (enrichment.lemma and enrichment.lemma != word.lemma)
+        or (enrichment.gender and enrichment.gender != word.gender)
+        or (enrichment.plural and enrichment.plural != word.plural)
+        or (enrichment.preterite and enrichment.preterite != word.preterite)
+        or (enrichment.past_participle and enrichment.past_participle != word.past_participle)
+        or (enrichment.auxiliary and enrichment.auxiliary != word.auxiliary)
+        or (enrichment.translations and json.dumps(enrichment.translations) != word.translations)
+    )
+
+    return "modified" if would_change else "skipped"
 
 
 @app.command(name="edit")
@@ -484,6 +599,162 @@ async def _delete_word(word_id: int, force: bool) -> None:
                 console.print("[dim]Cancelled.[/]")
                 return
 
+        # Record deletion event before deleting
+        await record_event(session, word, "DELETED", "cli", "Manual deletion")
         await session.delete(word)
         await session.commit()
         console.print(f"[success]Deleted word: {word.display_word}[/]")
+
+
+@app.command(name="history")
+def show_history(
+    word_id: int = typer.Argument(..., help="Word ID to show history for"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Maximum events to show"),
+) -> None:
+    """Show change history for a word."""
+    run_async(_show_history(word_id, limit))
+
+
+async def _show_history(word_id: int, limit: int) -> None:
+    """Async implementation of history command."""
+    async with async_session() as session:
+        events = await get_word_history(session, word_id, limit)
+
+        if not events:
+            # Check if word exists
+            word = await session.get(Word, word_id)
+            if word:
+                console.print(
+                    f"[dim]No history recorded for word {word_id} ({word.display_word})[/]"
+                )
+            else:
+                error_console.print(f"[error]Word with ID {word_id} not found[/]")
+            return
+
+        table = Table(title=f"History for word {word_id}")
+        table.add_column("Event ID", style="dim")
+        table.add_column("Time")
+        table.add_column("Type")
+        table.add_column("Word")
+        table.add_column("Source")
+        table.add_column("Reason")
+
+        for event in events:
+            type_style = {
+                "CREATED": "green",
+                "MODIFIED": "yellow",
+                "DELETED": "red",
+                "RESTORED": "cyan",
+            }.get(event.event_type, "white")
+
+            display_word = event.lemma
+            if event.pos == "NOUN" and event.gender:
+                display_word = f"{event.gender} {event.lemma}"
+
+            table.add_row(
+                str(event.id),
+                event.event_at.strftime("%Y-%m-%d %H:%M"),
+                f"[{type_style}]{event.event_type}[/]",
+                display_word,
+                event.source,
+                event.reason or "-",
+            )
+
+        console.print(table)
+
+
+@app.command(name="deleted")
+def list_deleted(
+    limit: int = typer.Option(20, "--limit", "-n", help="Maximum to show"),
+    hours: int = typer.Option(24, "--hours", "-h", help="Show deletions from last N hours"),
+) -> None:
+    """List recently deleted words that can be restored."""
+    run_async(_list_deleted(limit, hours))
+
+
+async def _list_deleted(limit: int, hours: int) -> None:
+    """Async implementation of deleted command."""
+    async with async_session() as session:
+        after = datetime.now(timezone.utc) - timedelta(hours=hours)
+        events = await get_deleted_words(session, after=after, limit=limit)
+
+        if not events:
+            console.print(f"[dim]No deleted words in the last {hours} hours[/]")
+            return
+
+        table = Table(title=f"Deleted Words (last {hours}h)")
+        table.add_column("Event ID", style="dim")
+        table.add_column("Word ID")
+        table.add_column("Word")
+        table.add_column("Deleted At")
+        table.add_column("Reason")
+
+        for event in events:
+            display_word = event.lemma
+            if event.pos == "NOUN" and event.gender:
+                display_word = f"{event.gender} {event.lemma}"
+
+            table.add_row(
+                str(event.id),
+                str(event.word_id),
+                display_word,
+                event.event_at.strftime("%Y-%m-%d %H:%M"),
+                event.reason or "-",
+            )
+
+        console.print(table)
+        console.print("\n[dim]Use 'vocabext vocab restore <event_id>' to restore a word[/]")
+
+
+@app.command(name="restore")
+def restore_word(
+    event_id: int = typer.Argument(..., help="Event ID to restore from"),
+) -> None:
+    """Restore a deleted word from an event."""
+    run_async(_restore_word(event_id))
+
+
+async def _restore_word(event_id: int) -> None:
+    """Async implementation of restore command."""
+    async with async_session() as session:
+        event = await session.get(WordEvent, event_id)
+
+        if not event:
+            error_console.print(f"[error]Event with ID {event_id} not found[/]")
+            raise typer.Exit(1)
+
+        # Check if word already exists
+        existing = await session.get(Word, event.word_id)
+        if existing:
+            console.print(
+                f"[warning]Word {event.word_id} already exists ({existing.display_word})[/]"
+            )
+            if not Confirm.ask("Overwrite with state from this event?"):
+                console.print("[dim]Cancelled.[/]")
+                return
+
+        word = await revert_to_event(session, event, source="restore")
+        await session.commit()
+
+        console.print(f"[success]Restored word: {word.display_word}[/]")
+
+
+@app.command(name="undo")
+def undo_word(
+    word_id: int = typer.Argument(..., help="Word ID to undo last change"),
+) -> None:
+    """Undo the last change to a word."""
+    run_async(_undo_word(word_id))
+
+
+async def _undo_word(word_id: int) -> None:
+    """Async implementation of undo command."""
+    async with async_session() as session:
+        word = await undo_last_change(session, word_id)
+
+        if not word:
+            error_console.print(f"[error]Cannot undo - no previous state for word {word_id}[/]")
+            raise typer.Exit(1)
+
+        await session.commit()
+        console.print(f"[success]Undid last change to: {word.display_word}[/]")

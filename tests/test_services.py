@@ -22,6 +22,7 @@ class TestEnrichmentResult:
         assert result.past_participle is None
         assert result.auxiliary is None
         assert result.translations == []
+        assert result.dictionary_error is None
 
     def test_with_values(self):
         """Should store provided values."""
@@ -33,6 +34,31 @@ class TestEnrichmentResult:
         assert result.gender == "die"
         assert result.plural == "Arbeiten"
         assert result.translations == ["work", "job"]
+
+    def test_with_dictionary_fields(self):
+        """Should store dictionary-grounded fields."""
+        result = EnrichmentResult(
+            lemma="Haus",
+            definition_de="Ein Gebäude zum Wohnen",
+            synonyms=["Gebäude", "Heim"],
+            frequency=5.5,
+            ipa="/haʊs/",
+            lemma_source="spacy",
+            dictionary_url="https://example.com",
+        )
+        assert result.definition_de == "Ein Gebäude zum Wohnen"
+        assert result.synonyms == ["Gebäude", "Heim"]
+        assert result.frequency == 5.5
+        assert result.lemma_source == "spacy"
+
+    def test_with_error(self):
+        """Should store error information."""
+        result = EnrichmentResult(
+            error="API timeout",
+            dictionary_error="Lookup failed",
+        )
+        assert result.error == "API timeout"
+        assert result.dictionary_error == "Lookup failed"
 
 
 class TestEnricher:

@@ -6,8 +6,11 @@ from typing import Any
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.llm import chat_completion, get_semaphore
+from app.config import settings
+from app.services.dictionary import DictionaryService
+from app.services.llm import chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +110,15 @@ class EnrichmentResult(BaseModel):
     translations: list[str] = Field(default_factory=list)
     error: str | None = None  # Error message if enrichment failed
 
+    # Dictionary-grounded fields
+    definition_de: str | None = None  # German definition
+    synonyms: list[str] = Field(default_factory=list)
+    frequency: float | None = None  # DWDS 0-6 scale
+    ipa: str | None = None  # Pronunciation
+    lemma_source: str | None = None  # "spacy", "dwds", etc.
+    dictionary_url: str | None = None  # Link to entry
+    dictionary_error: str | None = None  # Error from dictionary lookup (if any)
+
 
 class Enricher:
     """Enrich vocabulary with grammatical information using OpenAI API."""
@@ -115,10 +127,20 @@ class Enricher:
         self,
         api_key: str | None = None,
         model: str | None = None,
+        dictionary_service: DictionaryService | None = None,
     ) -> None:
         # Keep for backwards compatibility with tests
         self.api_key = api_key
         self.model = model
+        self._dictionary = dictionary_service
+        self._dictionary_enabled = settings.dictionary_enabled
+
+    @property
+    def dictionary(self) -> DictionaryService:
+        """Get or create the dictionary service."""
+        if self._dictionary is None:
+            self._dictionary = DictionaryService()
+        return self._dictionary
 
     def _build_prompt(self, lemma: str, pos: str, context: str) -> str:
         """Build the prompt for LLM enrichment."""
@@ -320,29 +342,138 @@ Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-,
         First validates the lemma is correct, then enriches with grammatical info.
         If lemma needs correction, uses the corrected lemma for enrichment.
 
-        Uses global semaphore to limit concurrent tasks (holds for both API calls).
-
         Returns EnrichmentResult with all available fields populated.
         """
-        async with get_semaphore():
-            # First validate lemma
-            validation = await self.validate_lemma(lemma, pos, context)
+        # First validate lemma
+        validation = await self.validate_lemma(lemma, pos, context)
 
-            if validation.get("error"):
-                return EnrichmentResult(
-                    lemma=lemma,
-                    error=validation["error"],
+        if validation.get("error"):
+            return EnrichmentResult(
+                lemma=lemma,
+                error=validation["error"],
+            )
+
+        # Use corrected lemma if different
+        lemma_to_use = validation.get("corrected_lemma", lemma)
+
+        # Get enrichment with validated/corrected lemma
+        result = await self.enrich(lemma_to_use, pos, context)
+
+        # If lemma was corrected, include the correction in result
+        if lemma_to_use != lemma:
+            result.lemma = lemma_to_use
+            logger.info(f"Lemma corrected: '{lemma}' -> '{lemma_to_use}'")
+
+        return result
+
+    async def enrich_with_dictionary(
+        self,
+        lemma: str,
+        pos: str,
+        context: str,
+        session: AsyncSession | None = None,
+    ) -> EnrichmentResult:
+        """
+        Enrich a word using dictionary lookup first, then LLM for remaining data.
+
+        This method:
+        1. Validates the lemma using local dictionary (spaCy vocabulary)
+        2. Uses LLM for translations, plural forms, verb conjugations
+        3. Merges dictionary and LLM data
+
+        Args:
+            lemma: The word lemma to enrich
+            pos: Part of speech (NOUN, VERB, ADJ, ADV, ADP)
+            context: Context sentence for better LLM results
+            session: Database session for dictionary caching
+
+        Returns:
+            EnrichmentResult with combined dictionary and LLM data
+        """
+        result = EnrichmentResult(lemma=lemma, lemma_source="spacy")
+
+        # Step 1: Validate and potentially correct lemma using dictionary
+        validated_lemma = lemma
+        if self._dictionary_enabled:
+            try:
+                (
+                    validated_lemma,
+                    is_grounded,
+                    source,
+                ) = await self.dictionary.validate_and_ground_lemma(lemma, pos, session)
+
+                if is_grounded:
+                    result.lemma = validated_lemma
+                    result.lemma_source = source or "dictionary"
+                    if validated_lemma != lemma:
+                        logger.info(
+                            f"Lemma corrected by {source}: '{lemma}' -> '{validated_lemma}'"
+                        )
+
+            except Exception as e:
+                logger.warning(f"Dictionary validation failed for '{lemma}': {e}")
+                result.dictionary_error = f"Validation failed: {e}"
+                validated_lemma = lemma
+
+        # Step 2: Get additional dictionary data (frequency, IPA, URL)
+        if self._dictionary_enabled:
+            try:
+                dict_entry = await self.dictionary.get_enrichment_data(
+                    validated_lemma, pos, session
                 )
 
-            # Use corrected lemma if different
-            lemma_to_use = validation.get("corrected_lemma", lemma)
+                if dict_entry:
+                    # Use dictionary gender if available (nouns)
+                    if dict_entry.gender and pos == "NOUN":
+                        result.gender = dict_entry.gender
 
-            # Get enrichment with validated/corrected lemma
-            result = await self.enrich(lemma_to_use, pos, context)
+                    # Copy dictionary metadata
+                    if dict_entry.definitions:
+                        result.definition_de = "; ".join(dict_entry.definitions)
+                    if dict_entry.synonyms:
+                        result.synonyms = dict_entry.synonyms
+                    result.frequency = dict_entry.frequency
+                    result.ipa = dict_entry.ipa
+                    result.dictionary_url = dict_entry.url
 
-            # If lemma was corrected, include the correction in result
-            if lemma_to_use != lemma:
-                result.lemma = lemma_to_use
-                logger.info(f"Lemma corrected: '{lemma}' -> '{lemma_to_use}'")
+                    logger.debug(
+                        f"Dictionary enrichment for '{validated_lemma}': source={dict_entry.source}"
+                    )
 
-            return result
+            except Exception as e:
+                logger.warning(f"Dictionary lookup failed for '{validated_lemma}': {e}")
+                result.dictionary_error = f"Lookup failed: {e}"
+                # Continue with LLM-only enrichment
+
+        # Step 3: Use LLM for remaining data
+        # - Translations (always from LLM)
+        # - Plural forms (not in local dictionary)
+        # - Verb conjugations (preterite, past_participle, auxiliary)
+        # - Gender (if dictionary didn't provide it)
+        try:
+            llm_result = await self.enrich(result.lemma or lemma, pos, context)
+
+            # Merge LLM results (prefer dictionary data where available)
+            result.translations = llm_result.translations
+
+            # Use LLM for data not available from dictionary
+            if pos == "NOUN":
+                if not result.gender:
+                    result.gender = llm_result.gender
+                result.plural = llm_result.plural
+
+            elif pos == "VERB":
+                result.preterite = llm_result.preterite
+                result.past_participle = llm_result.past_participle
+                result.auxiliary = llm_result.auxiliary
+
+            # Note: We intentionally do NOT use LLM lemma corrections here.
+            # Local dictionary (spaCy) is the source of truth for lemma validation.
+            # LLM corrections were non-deterministic and caused idempotency issues.
+            # If dictionary didn't ground the lemma, we keep the original.
+
+        except Exception as e:
+            logger.warning(f"LLM enrichment failed for '{lemma}': {e}")
+            result.error = str(e)
+
+        return result

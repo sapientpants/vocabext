@@ -85,14 +85,11 @@ async def _sync() -> None:
                     word.anki_note_id = note_id
                     word.anki_synced_at = datetime.now(timezone.utc)
                     synced += 1
-                    progress.update(
-                        task, advance=1, description=f"[green]Synced: {word.display_word}[/]"
-                    )
                 else:
                     failed += 1
-                    progress.update(
-                        task, advance=1, description=f"[red]Failed: {word.display_word}[/]"
-                    )
+                progress.update(
+                    task, advance=1, description=f"[green]S:{synced}[/] [red]F:{failed}[/]"
+                )
 
             await session.commit()
 

@@ -57,21 +57,6 @@ def sample_word_data() -> dict[str, Any]:
 
 
 @pytest.fixture
-def sample_extraction_data() -> dict[str, Any]:
-    """Sample extraction data for testing."""
-    return {
-        "surface_form": "Arbeit",
-        "lemma": "Arbeit",
-        "pos": "NOUN",
-        "gender": "die",
-        "plural": "Arbeiten",
-        "translations": '["work", "job"]',
-        "context_sentence": "Die Arbeit ist wichtig.",
-        "status": "pending",
-    }
-
-
-@pytest.fixture
 def temp_upload_dir(tmp_path: Path) -> Path:
     """Create a temporary upload directory."""
     upload_dir = tmp_path / "uploads"
