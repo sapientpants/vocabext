@@ -330,8 +330,9 @@ async def _add_word(word: str, context: str) -> None:
                 progress.update(task, description=f"[green]Detected: {pos}[/]")
             except Exception as e:
                 progress.update(task, description="[red]Enrichment failed[/]")
+                logger.exception("Failed to enrich word")
                 error_console.print(f"[error]Failed to enrich word: {e}[/]")
-                raise typer.Exit(1) from None
+                raise typer.Exit(1) from e
 
         if not enrichment:
             error_console.print("[error]Enrichment returned no result[/]")
@@ -341,7 +342,12 @@ async def _add_word(word: str, context: str) -> None:
         lemma = enrichment.lemma or word
 
         # Step 2: Check for duplicate
-        stmt = select(Word).where(Word.lemma == lemma, Word.pos == pos)
+        # Include gender for nouns to align with database unique constraint on (lemma, pos, gender)
+        conditions = [Word.lemma == lemma, Word.pos == pos]
+        if pos == "NOUN" and enrichment.gender is not None:
+            conditions.append(Word.gender == enrichment.gender)
+
+        stmt = select(Word).where(*conditions)
         result = await session.execute(stmt)
         existing = result.scalar_one_or_none()
 

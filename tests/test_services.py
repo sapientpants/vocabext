@@ -238,6 +238,111 @@ class TestEnricher:
             assert result.error is not None
             assert "not found" in result.error.lower()
 
+    @pytest.mark.asyncio
+    async def test_detect_pos_noun(self):
+        """Should detect noun POS correctly."""
+        enricher = Enricher()
+
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.return_value = {"pos": "NOUN", "lemma": "Arbeit"}
+
+            pos, lemma = await enricher.detect_pos("Arbeit")
+            assert pos == "NOUN"
+            assert lemma == "Arbeit"
+
+    @pytest.mark.asyncio
+    async def test_detect_pos_verb(self):
+        """Should detect verb POS correctly."""
+        enricher = Enricher()
+
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.return_value = {"pos": "VERB", "lemma": "arbeiten"}
+
+            pos, lemma = await enricher.detect_pos("arbeiten")
+            assert pos == "VERB"
+            assert lemma == "arbeiten"
+
+    @pytest.mark.asyncio
+    async def test_detect_pos_with_context(self):
+        """Should use context for POS detection."""
+        enricher = Enricher()
+
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.return_value = {"pos": "ADJ", "lemma": "schnell"}
+
+            pos, lemma = await enricher.detect_pos("schnell", "Das Auto ist schnell.")
+            assert pos == "ADJ"
+            assert lemma == "schnell"
+            # Verify context was included in prompt
+            call_args = mock_chat.call_args
+            assert "Das Auto ist schnell." in call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_detect_pos_strips_article(self):
+        """Should strip article from lemma."""
+        enricher = Enricher()
+
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.return_value = {"pos": "NOUN", "lemma": "die Arbeit"}
+
+            pos, lemma = await enricher.detect_pos("die Arbeit")
+            assert pos == "NOUN"
+            assert lemma == "Arbeit"  # Article stripped
+
+    @pytest.mark.asyncio
+    async def test_detect_pos_defaults_on_missing_fields(self):
+        """Should default to NOUN and original word if fields missing."""
+        enricher = Enricher()
+
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.return_value = {}  # Empty response
+
+            pos, lemma = await enricher.detect_pos("test")
+            assert pos == "NOUN"  # Default POS
+            assert lemma == "test"  # Original word
+
+    @pytest.mark.asyncio
+    async def test_enrich_word_full_pipeline(self):
+        """Should run full enrichment pipeline: detect POS then enrich."""
+        enricher = Enricher()
+
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            # First call: POS detection
+            # Second call: enrichment
+            mock_chat.side_effect = [
+                {"pos": "NOUN", "lemma": "Haus"},
+                {"lemma": "Haus", "gender": "das", "plural": "Häuser", "translations": ["house"]},
+            ]
+
+            with patch.object(enricher, "_dictionary_enabled", False):
+                pos, result = await enricher.enrich_word("Haus")
+
+            assert pos == "NOUN"
+            assert result.lemma == "Haus"
+            assert result.gender == "das"
+            assert result.plural == "Häuser"
+            assert result.translations == ["house"]
+
+    @pytest.mark.asyncio
+    async def test_enrich_word_with_context(self):
+        """Should pass context through to both POS detection and enrichment."""
+        enricher = Enricher()
+        context = "Das Haus ist groß."
+
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.side_effect = [
+                {"pos": "NOUN", "lemma": "Haus"},
+                {"lemma": "Haus", "gender": "das", "plural": "Häuser", "translations": ["house"]},
+            ]
+
+            with patch.object(enricher, "_dictionary_enabled", False):
+                pos, result = await enricher.enrich_word("Haus", context)
+
+            # Verify context was used in both calls
+            assert mock_chat.call_count == 2
+            # POS detection call should include context
+            assert context in mock_chat.call_args_list[0][0][0]
+
 
 class TestTextExtractor:
     """Tests for TextExtractor service."""
