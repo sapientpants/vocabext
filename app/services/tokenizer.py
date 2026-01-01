@@ -452,3 +452,91 @@ class Tokenizer:
 
         logger.info(f"Extracted {len(tokens)} unique tokens from text")
         return tokens
+
+    def analyze_word(self, word: str, context: str = "") -> TokenInfo | None:
+        """
+        Analyze a single word to determine its POS and normalized lemma.
+
+        Uses the same spaCy pipeline as tokenize() for consistency.
+        This is the preferred method for single-word analysis (e.g., vocab add).
+
+        Args:
+            word: The German word to analyze
+            context: Optional context sentence for better POS detection
+
+        Returns:
+            TokenInfo with pos and lemma, or None if word cannot be analyzed
+        """
+        nlp = self._load_model()
+
+        # Build text for analysis - context helps with POS disambiguation
+        if context:
+            # Include context for better POS detection
+            text = f"{context}"
+        else:
+            # Just the word alone
+            text = word
+
+        doc = nlp(text)
+
+        # Find the token matching our word
+        word_lower = word.lower()
+        best_match: TokenInfo | None = None
+
+        for token in doc:
+            # Match by text (case-insensitive)
+            if token.text.lower() == word_lower or token.lemma_.lower() == word_lower:
+                # Skip irrelevant POS
+                if token.pos_ not in self.RELEVANT_POS:
+                    continue
+
+                # Skip punctuation, spaces, numbers
+                if not token.is_alpha or token.like_num:
+                    continue
+
+                # Get canonical lemma based on POS (same logic as tokenize)
+                if token.pos_ == "NOUN":
+                    lemma = self._diminutive_to_base(token.lemma_).capitalize().strip()
+                elif token.pos_ == "VERB":
+                    if self._looks_like_participle(token.lemma_):
+                        infinitive = self._participle_to_infinitive(token.lemma_)
+                        lemma = (infinitive if infinitive else token.lemma_.lower()).strip()
+                    else:
+                        lemma = token.lemma_.lower().strip()
+                elif token.pos_ == "ADJ":
+                    lemma = self._adjective_to_base_form(token.lemma_).strip()
+                elif token.pos_ == "ADP":
+                    lower = token.lemma_.lower().strip()
+                    lemma = self.PREPOSITION_CONTRACTIONS.get(lower, lower)
+                else:
+                    lemma = token.lemma_.lower().strip()
+
+                # Get context sentence
+                sent_text = token.sent.text.strip() if token.sent else context or word
+
+                best_match = TokenInfo(
+                    surface_form=token.text,
+                    lemma=lemma,
+                    pos=token.pos_,
+                    context_sentence=sent_text,
+                )
+                break  # Found a match
+
+        # If no match in context, try analyzing the word alone
+        if best_match is None and context:
+            return self.analyze_word(word, "")
+
+        # If still no match, default to NOUN (most common for unknown words)
+        if best_match is None:
+            # Capitalize for nouns (German nouns are capitalized)
+            lemma = word.capitalize() if word[0].isupper() or not context else word.lower()
+            best_match = TokenInfo(
+                surface_form=word,
+                lemma=lemma,
+                pos="NOUN",  # Default assumption
+                context_sentence=context or word,
+            )
+            logger.debug(f"Word '{word}' not found in spaCy analysis, defaulting to NOUN")
+
+        logger.info(f"Analyzed word '{word}': pos={best_match.pos}, lemma='{best_match.lemma}'")
+        return best_match

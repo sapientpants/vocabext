@@ -114,6 +114,56 @@ POS_DETECTION_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+# Unified schema for single-call enrichment (all POS types)
+UNIFIED_ENRICHMENT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "lemma": {
+            "type": "string",
+            "description": "Correct base/dictionary form of the word",
+        },
+        "translations": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "1-3 English translations, most common first",
+        },
+        # Noun-specific fields
+        "gender": {
+            "type": ["string", "null"],
+            "enum": ["der", "die", "das", None],
+            "description": "Article for nouns (der/die/das), null for non-nouns",
+        },
+        "plural": {
+            "type": ["string", "null"],
+            "description": "Plural form for nouns, null for non-nouns",
+        },
+        # Verb-specific fields
+        "preterite": {
+            "type": ["string", "null"],
+            "description": "3rd person singular preterite for verbs, null for non-verbs",
+        },
+        "past_participle": {
+            "type": ["string", "null"],
+            "description": "Past participle for verbs (without auxiliary), null for non-verbs",
+        },
+        "auxiliary": {
+            "type": ["string", "null"],
+            "enum": ["haben", "sein", None],
+            "description": "Auxiliary verb (haben/sein) for verbs, null for non-verbs",
+        },
+    },
+    "required": [
+        "lemma",
+        "translations",
+        "gender",
+        "plural",
+        "preterite",
+        "past_participle",
+        "auxiliary",
+    ],
+    "additionalProperties": False,
+}
+
 
 class EnrichmentResult(BaseModel):
     """Result of LLM enrichment for a word."""
@@ -159,8 +209,43 @@ class Enricher:
             self._dictionary = DictionaryService()
         return self._dictionary
 
+    def _build_unified_prompt(self, lemma: str, pos: str, context: str) -> str:
+        """Build unified prompt for single-call LLM enrichment."""
+        pos_instructions = {
+            "NOUN": """For this NOUN:
+- Provide the grammatical gender (der/die/das)
+- Provide the plural form (without article)
+- Set verb fields (preterite, past_participle, auxiliary) to null""",
+            "VERB": """For this VERB:
+- Set noun fields (gender, plural) to null
+- Provide preterite (3rd person singular, e.g., "ging" for gehen)
+- Provide past participle (without auxiliary, e.g., "gegangen")
+- Provide auxiliary (haben or sein - use sein for movement/state-change verbs)""",
+        }
+
+        specific_instructions = pos_instructions.get(
+            pos,
+            """For this word:
+- Set all noun fields (gender, plural) to null
+- Set all verb fields (preterite, past_participle, auxiliary) to null""",
+        )
+
+        return f"""Analyze this German word and provide complete grammatical information.
+
+Word: {lemma}
+Part of speech: {pos}
+Context: "{context}"
+
+{specific_instructions}
+
+IMPORTANT:
+- Verify the lemma is the correct base/dictionary form
+- Provide 1-3 English translations, most common first
+- Double-check all forms are spelled correctly
+- Use null for fields that don't apply to this part of speech"""
+
     def _build_prompt(self, lemma: str, pos: str, context: str) -> str:
-        """Build the prompt for LLM enrichment."""
+        """Build the prompt for LLM enrichment (legacy, kept for compatibility)."""
         if pos == "NOUN":
             return f"""Analyze this German noun and provide verified grammatical information.
 
@@ -215,16 +300,20 @@ IMPORTANT: Verify the lemma is the correct base/dictionary form (not inflected o
         """
         Enrich a word with grammatical information via OpenAI API.
 
+        This is the primary enrichment method - uses a single unified LLM call
+        to get all grammatical information regardless of POS.
+
         Returns EnrichmentResult with available fields populated.
 
-        Uses a semaphore to limit concurrent LLM requests (max 20),
+        Uses a semaphore to limit concurrent LLM requests,
         balancing throughput with API rate limits.
         """
-        prompt = self._build_prompt(lemma, pos, context)
-        schema, schema_name = self._get_schema_for_pos(pos)
+        prompt = self._build_unified_prompt(lemma, pos, context)
 
         try:
-            data = await self._call_chat_api(prompt, schema, schema_name)
+            data = await self._call_chat_api(
+                prompt, UNIFIED_ENRICHMENT_SCHEMA, "unified_enrichment"
+            )
             return self._build_result(data, pos)
 
         except APITimeoutError:

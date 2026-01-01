@@ -4,9 +4,15 @@ This document provides Mermaid sequence diagrams for all processing pipelines in
 
 ## Overview
 
-The application uses a hybrid approach:
-- **Local processing**: spaCy for tokenization and lemma validation (fast, free, offline)
-- **LLM API**: OpenAI for translations, grammar details, and POS detection when context is unavailable
+The application uses a hybrid approach with a **unified pipeline** for all word processing:
+- **Local processing**: spaCy for tokenization, POS detection, and lemma normalization (fast, free, offline)
+- **LLM API**: OpenAI for translations and grammar details only (single call per word)
+
+### Key Design Principles
+
+1. **Single LLM call per word** - All enrichment data is fetched in one API call using a unified schema
+2. **spaCy for all POS detection** - Both file processing and manual word addition use spaCy
+3. **Alphabetic-only words** - Only words containing purely alphabetic characters are processed
 
 ### When Each Is Used
 
@@ -14,19 +20,55 @@ The application uses a hybrid approach:
 |-----------|---------------|--------------|
 | Tokenize document text | Yes | No |
 | Extract POS from document | Yes | No |
-| Extract lemma from document | Yes | No |
-| Detect POS (manual input) | No | Yes |
+| Detect POS (manual word add) | Yes | No |
+| Normalize lemma | Yes | No |
 | Validate lemma exists | Yes | No |
 | Get translations | No | Yes |
-| Get noun gender | Partial | Fallback |
+| Get noun gender | No | Yes |
 | Get noun plural | No | Yes |
 | Get verb conjugations | No | Yes |
 
 ---
 
-## Pipeline 1: Document Processing (Mostly Local)
+## Unified Processing Pipeline
 
-When processing files, most work is done locally by spaCy. OpenAI is only called for enrichment.
+Both `vocab add` and `process file` commands now use the **same pipeline**:
+
+```mermaid
+sequenceDiagram
+    participant Input as User Input
+    participant spaCy as spaCy (LOCAL)
+    participant Enricher
+    participant API as OpenAI API
+    participant DB as Database
+
+    Input->>spaCy: Word + optional context
+
+    rect rgb(230, 255, 230)
+        Note over spaCy: LOCAL - POS Detection & Lemma Normalization
+        spaCy->>spaCy: Analyze word with nlp()
+        spaCy->>spaCy: Determine POS (NOUN, VERB, ADJ, etc.)
+        spaCy->>spaCy: Normalize lemma based on POS
+        Note over spaCy: NOUN: capitalize, strip diminutive<br/>VERB: convert participle to infinitive<br/>ADJ: convert to base form
+        spaCy-->>Enricher: TokenInfo(pos, lemma, context)
+    end
+
+    rect rgb(255, 240, 230)
+        Note over Enricher,API: SINGLE API CALL - Unified Enrichment
+        Enricher->>API: Prompt + UNIFIED_SCHEMA
+        Note over API: Returns ALL fields in one call:<br/>translations, gender, plural,<br/>preterite, past_participle, auxiliary<br/>(null for non-applicable fields)
+        API-->>Enricher: EnrichmentResult
+    end
+
+    Enricher->>DB: Create Word record
+    Note over DB: lemma_source = "spacy"
+```
+
+---
+
+## Pipeline 1: Document Processing
+
+When processing files, spaCy tokenizes the entire document and extracts all relevant words.
 
 Located in `app/services/tokenizer.py` and `app/cli/commands/process.py`.
 
@@ -58,6 +100,7 @@ sequenceDiagram
 
         loop For each token
             Tokenizer->>Tokenizer: Filter by POS (NOUN, VERB, ADJ, ADV, ADP)
+            Tokenizer->>Tokenizer: Skip non-alphabetic tokens
             Tokenizer->>Tokenizer: Skip participles, ordinals, stopwords
             Tokenizer->>Tokenizer: Normalize lemma (diminutives, contractions)
             Tokenizer->>Tokenizer: Deduplicate by (lemma, pos)
@@ -71,11 +114,11 @@ sequenceDiagram
     CLI->>CLI: Filter to new words only
 
     rect rgb(255, 240, 230)
-        Note over CLI,API: API CALLS - Only for enrichment
+        Note over CLI,API: SINGLE API CALL per word
         par Parallel enrichment (semaphore limited)
             loop For each new word
                 CLI->>Enricher: enrich(lemma, pos, context)
-                Enricher->>API: Get translations + grammar
+                Enricher->>API: Unified schema request
                 API-->>Enricher: EnrichmentResult
                 Enricher-->>CLI: EnrichmentResult
             end
@@ -83,75 +126,69 @@ sequenceDiagram
     end
 
     CLI->>DB: Batch insert Word records
+    Note over DB: lemma_source = "spacy"
     CLI-->>User: Summary (X new words added)
 ```
 
 ---
 
-## Pipeline 2: Manual Word Add (Mixed Local + LLM)
+## Pipeline 2: Manual Word Addition
 
-When adding a word manually via `vocab add`, we need LLM for POS detection (no document context), but use local dictionary for validation.
+When adding a word via `vocab add`, spaCy's `analyze_word()` method determines POS.
 
-Located in `app/cli/commands/vocabulary.py` and `app/services/enricher.py`.
+Located in `app/cli/commands/vocabulary.py` and `app/services/tokenizer.py`.
 
 ```mermaid
 sequenceDiagram
     participant User
     participant CLI as vocab add
-    participant Enricher as enrich_word()
-    participant LLM_POS as detect_pos()
-    participant Dict as Dictionary (LOCAL)
-    participant spaCy as spaCy Backend (LOCAL)
-    participant LLM_Enrich as enrich()
+    participant Validator
+    participant Tokenizer as Tokenizer (LOCAL)
+    participant spaCy as spaCy (LOCAL)
+    participant Enricher
     participant API as OpenAI API
     participant DB as Database
 
     User->>CLI: vocab add "Hund" --context "Der Hund bellt"
-    CLI->>Enricher: enrich_word("Hund", context, session)
 
-    rect rgb(255, 240, 230)
-        Note over Enricher,API: API CALL - POS Detection<br/>(no document context available)
-        Enricher->>LLM_POS: detect_pos("Hund", context)
-        LLM_POS->>API: Determine POS and normalize lemma
-        API-->>LLM_POS: {pos: "NOUN", lemma: "Hund"}
-        LLM_POS-->>Enricher: ("NOUN", "Hund")
-    end
-
-    Enricher->>Dict: enrich_with_dictionary("Hund", "NOUN", context)
+    CLI->>Validator: Validate input
+    Validator->>Validator: Check non-empty
+    Validator->>Validator: Check alphabetic only
+    Note over Validator: Rejects: "Wort123", "Baden-Württemberg"<br/>Accepts: "Größe", "über", "Hund"
 
     rect rgb(230, 255, 230)
-        Note over Dict,spaCy: LOCAL - Dictionary Validation
-        Dict->>spaCy: validate_and_ground_lemma("Hund", "NOUN")
-        spaCy->>spaCy: Check vocabulary: nlp.vocab["Hund"].is_oov?
-        spaCy-->>Dict: (lemma="Hund", is_grounded=True, source="spacy")
-
-        Dict->>spaCy: get_enrichment_data("Hund", "NOUN")
-        Note over spaCy: spaCy only validates existence,<br/>no gender/definitions/frequency
-        spaCy-->>Dict: DictionaryEntry(lemma_validated=True)
+        Note over CLI,spaCy: LOCAL - POS Detection (same as document processing)
+        CLI->>Tokenizer: analyze_word("Hund", context)
+        Tokenizer->>spaCy: nlp(context or word)
+        spaCy-->>Tokenizer: Doc with tokens
+        Tokenizer->>Tokenizer: Find matching token
+        Tokenizer->>Tokenizer: Extract POS and normalize lemma
+        Tokenizer-->>CLI: TokenInfo(pos="NOUN", lemma="Hund")
     end
+
+    CLI->>DB: Check for duplicate (lemma, pos, gender)
+    DB-->>CLI: No duplicate found
 
     rect rgb(255, 240, 230)
-        Note over Dict,API: API CALL - Enrichment<br/>(translations, grammar not in dictionary)
-        Dict->>LLM_Enrich: enrich("Hund", "NOUN", context)
-        LLM_Enrich->>API: Get gender, plural, translations
-        API-->>LLM_Enrich: {gender: "der", plural: "Hunde", translations: ["dog"]}
-        LLM_Enrich-->>Dict: EnrichmentResult
+        Note over CLI,API: SINGLE API CALL - Unified Enrichment
+        CLI->>Enricher: enrich("Hund", "NOUN", context)
+        Enricher->>API: Unified schema request
+        API-->>Enricher: {gender: "der", plural: "Hunde",<br/>translations: ["dog"], ...}
+        Enricher-->>CLI: EnrichmentResult
     end
 
-    Dict->>Dict: Merge dictionary + LLM results
-    Dict-->>Enricher: EnrichmentResult
-
-    Enricher-->>CLI: ("NOUN", EnrichmentResult)
-
     CLI->>DB: Create Word record
+    Note over DB: lemma_source = "spacy"
     CLI-->>User: Display enriched word
 ```
 
 ---
 
-## Pipeline 3: Core Chat Completion (LLM Wrapper)
+## Pipeline 3: Core LLM Service
 
-The foundational LLM service with retry logic and concurrency control. Located in `app/services/llm.py`.
+The foundational LLM service with retry logic and concurrency control.
+
+Located in `app/services/llm.py`.
 
 ```mermaid
 sequenceDiagram
@@ -162,7 +199,7 @@ sequenceDiagram
     participant API as OpenAI API
 
     rect rgb(255, 240, 230)
-        Note over Caller,API: API CALL
+        Note over Caller,API: SINGLE API CALL
 
         Caller->>llm: chat_completion(prompt, schema, schema_name)
 
@@ -173,7 +210,7 @@ sequenceDiagram
             llm->>Client: responses.create()
 
             Note over Client,API: Request Structure
-            Client->>API: model: gpt-5-mini<br/>input: [{role: user, content: prompt}]<br/>text.format: json_schema
+            Client->>API: model: gpt-5-mini<br/>input: [{role: user, content: prompt}]<br/>text.format: json_schema (UNIFIED)
 
             alt Success
                 API-->>Client: Response with output_text
@@ -196,9 +233,11 @@ sequenceDiagram
 
 ---
 
-## Pipeline 4: Word Enrichment (LLM Only)
+## Pipeline 4: Word Enrichment (Unified Schema)
 
-Enriches German words with grammatical information based on part of speech. Located in `app/services/enricher.py`.
+Single LLM call that returns all grammatical information regardless of POS.
+
+Located in `app/services/enricher.py`.
 
 ```mermaid
 sequenceDiagram
@@ -208,170 +247,55 @@ sequenceDiagram
     participant API as OpenAI API
 
     rect rgb(255, 240, 230)
-        Note over Caller,API: API CALL
+        Note over Caller,API: SINGLE API CALL - Unified Schema
 
         Caller->>Enricher: enrich(lemma, pos, context)
 
-        alt POS == NOUN
-            Enricher->>Enricher: Build noun prompt
-            Note over Enricher: Request: gender, plural, translations
-            Enricher->>Enricher: Select NOUN_SCHEMA
-        else POS == VERB
-            Enricher->>Enricher: Build verb prompt
-            Note over Enricher: Request: preterite, past_participle,<br/>auxiliary, translations
-            Enricher->>Enricher: Select VERB_SCHEMA
-        else POS == ADJ/ADV/ADP
-            Enricher->>Enricher: Build word prompt
-            Note over Enricher: Request: lemma, translations
-            Enricher->>Enricher: Select WORD_SCHEMA
-        end
+        Enricher->>Enricher: Build unified prompt
+        Note over Enricher: POS-specific instructions:<br/>NOUN: provide gender, plural<br/>VERB: provide conjugations<br/>OTHER: set noun/verb fields to null
 
-        Enricher->>llm: chat_completion(prompt, schema)
+        Enricher->>llm: chat_completion(prompt, UNIFIED_SCHEMA)
         llm->>API: Structured JSON request
-        API-->>llm: JSON response
+        API-->>llm: All fields in one response
         llm-->>Enricher: Parsed dict
 
-        Enricher->>Enricher: Strip German articles
         Enricher->>Enricher: Build EnrichmentResult
+        Note over Enricher: Fields populated based on POS:<br/>- lemma, translations (always)<br/>- gender, plural (nouns)<br/>- preterite, past_participle, aux (verbs)
+
         Enricher-->>Caller: EnrichmentResult
     end
 ```
 
----
+### Unified Schema Structure
 
-## Pipeline 5: POS Detection (LLM Only)
-
-Determines part of speech for words without document context. Located in `app/services/enricher.py`.
-
-```mermaid
-sequenceDiagram
-    participant Caller
-    participant Enricher as enricher.detect_pos()
-    participant llm as llm.chat_completion()
-    participant API as OpenAI API
-
-    rect rgb(255, 240, 230)
-        Note over Caller,API: API CALL<br/>(used when no document context)
-
-        Caller->>Enricher: detect_pos(word, context)
-
-        Enricher->>Enricher: Build POS detection prompt
-        Note over Enricher: Categories: NOUN, VERB, ADJ, ADV, ADP<br/>+ rules for dictionary form
-
-        Enricher->>llm: chat_completion(prompt, POS_DETECTION_SCHEMA)
-        llm->>API: Structured JSON request
-        API-->>llm: {pos: "VERB", lemma: "arbeiten"}
-        llm-->>Enricher: Parsed dict
-
-        Enricher->>Enricher: Strip articles from lemma
-        Enricher-->>Caller: (pos, lemma)
-    end
-```
-
----
-
-## Pipeline 6: Dictionary-Grounded Enrichment (Hybrid)
-
-The main enrichment flow that combines local dictionary with LLM. Located in `app/services/enricher.py`.
-
-```mermaid
-sequenceDiagram
-    participant Caller
-    participant Enricher as enrich_with_dictionary()
-    participant Dict as DictionaryService (LOCAL)
-    participant spaCy as SpacyBackend (LOCAL)
-    participant LLM as enrich()
-    participant API as OpenAI API
-
-    Caller->>Enricher: enrich_with_dictionary(lemma, pos, context, session)
-
-    rect rgb(230, 255, 230)
-        Note over Enricher,spaCy: STEP 1: LOCAL - Lemma Validation
-        Enricher->>Dict: validate_and_ground_lemma(lemma, pos)
-        Dict->>spaCy: validate_lemma(lemma, pos)
-
-        spaCy->>spaCy: Check nlp.vocab[lemma].is_oov
-        alt Word in vocabulary
-            spaCy-->>Dict: (True, None)
-        else Try lowercase/titlecase
-            spaCy->>spaCy: Check variations
-            spaCy-->>Dict: (True, corrected_lemma)
-        else Unknown word
-            Note over spaCy: Assume valid (spaCy vocab<br/>doesn't have all German words)
-            spaCy-->>Dict: (True, None)
-        end
-
-        Dict-->>Enricher: (final_lemma, is_grounded, source)
-    end
-
-    rect rgb(230, 255, 230)
-        Note over Enricher,spaCy: STEP 2: LOCAL - Dictionary Metadata
-        Enricher->>Dict: get_enrichment_data(lemma, pos)
-        Dict->>spaCy: lookup(lemma, pos)
-        Note over spaCy: spaCy only provides:<br/>- lemma validation<br/>- source="spacy"<br/><br/>Does NOT provide:<br/>- gender, definitions<br/>- frequency, IPA, URL
-        spaCy-->>Dict: DictionaryEntry(lemma_validated=True)
-        Dict-->>Enricher: DictionaryEntry
-    end
-
-    rect rgb(255, 240, 230)
-        Note over Enricher,API: STEP 3: API CALL - LLM Enrichment
-        Enricher->>LLM: enrich(lemma, pos, context)
-        LLM->>API: Get translations + grammar
-        API-->>LLM: {translations, gender, plural, ...}
-        LLM-->>Enricher: EnrichmentResult
-    end
-
-    Enricher->>Enricher: Merge results
-    Note over Enricher: Dictionary: lemma validation, source<br/>LLM: translations, plural, conjugations<br/><br/>Note: Does NOT use LLM for lemma<br/>correction (spaCy is source of truth)
-
-    Enricher-->>Caller: EnrichmentResult
-```
-
----
-
-## Pipeline 7: Lemma Validation (LLM - Rarely Used)
-
-This LLM-based validation exists but is NOT used in the main flow. The `enrich_with_dictionary` intentionally uses local spaCy instead.
-
-Located in `app/services/enricher.py`.
-
-```mermaid
-sequenceDiagram
-    participant Caller
-    participant Enricher as enricher.validate_lemma()
-    participant llm as llm.chat_completion()
-    participant API as OpenAI API
-
-    rect rgb(255, 240, 230)
-        Note over Caller,API: API CALL (rarely used)<br/>Main flow uses local spaCy instead
-
-        Caller->>Enricher: validate_lemma(lemma, pos, context)
-
-        Enricher->>Enricher: Build validation prompt
-        Note over Enricher: POS-specific rules:<br/>NOUN: singular nominative<br/>VERB: infinitive form<br/>ADJ: base form<br/>+ German prefix warning
-
-        Enricher->>llm: chat_completion(prompt, VALIDATION_SCHEMA)
-        llm->>API: Is "{lemma}" a valid German {pos}?
-        API-->>llm: {valid, corrected_lemma, reason}
-        llm-->>Enricher: Parsed dict
-
-        Enricher-->>Caller: {valid, corrected_lemma, reason}
-    end
+```json
+{
+  "type": "object",
+  "properties": {
+    "lemma": {"type": "string"},
+    "translations": {"type": "array", "items": {"type": "string"}},
+    "gender": {"type": ["string", "null"], "enum": ["der", "die", "das", null]},
+    "plural": {"type": ["string", "null"]},
+    "preterite": {"type": ["string", "null"]},
+    "past_participle": {"type": ["string", "null"]},
+    "auxiliary": {"type": ["string", "null"], "enum": ["haben", "sein", null]}
+  },
+  "required": ["lemma", "translations", "gender", "plural", "preterite", "past_participle", "auxiliary"]
+}
 ```
 
 ---
 
 ## Vocab Validate Command
 
-Re-enriches existing words using the hybrid local+LLM flow.
+Re-enriches existing words using the unified pipeline.
 
 ```mermaid
 sequenceDiagram
     participant User
     participant CLI as vocab validate
     participant DB as Database
-    participant Enricher as enrich_with_dictionary()
-    participant spaCy as spaCy (LOCAL)
+    participant Enricher
     participant API as OpenAI API
 
     User->>CLI: vocab validate
@@ -380,18 +304,11 @@ sequenceDiagram
     DB-->>CLI: List[Word]
 
     loop For each word (parallel with semaphore)
-        CLI->>Enricher: enrich_with_dictionary(word.lemma, word.pos)
-
-        rect rgb(230, 255, 230)
-            Note over Enricher,spaCy: LOCAL
-            Enricher->>spaCy: Validate lemma
-            spaCy-->>Enricher: Validation result
-        end
-
         rect rgb(255, 240, 230)
-            Note over Enricher,API: API CALL
-            Enricher->>API: Get translations + grammar
-            API-->>Enricher: Enrichment data
+            Note over CLI,API: SINGLE API CALL per word
+            CLI->>Enricher: enrich(word.lemma, word.pos, "")
+            Enricher->>API: Unified schema request
+            API-->>Enricher: EnrichmentResult
         end
 
         Enricher-->>CLI: EnrichmentResult
@@ -413,35 +330,56 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    subgraph LOCAL["LOCAL PROCESSING"]
+    subgraph LOCAL["LOCAL PROCESSING (No API)"]
         A[Document Text] --> B[spaCy Tokenizer]
         B --> C[POS Tagging]
         B --> D[Lemmatization]
         B --> E[Sentence Segmentation]
 
-        F[Lemma] --> G[spaCy Vocabulary Check]
-        G --> H[Is word known?]
+        F[Manual Word Input] --> G[spaCy analyze_word]
+        G --> C
+        G --> D
     end
 
     style LOCAL fill:#e6ffe6
 ```
 
-### LLM Processing (OpenAI) - COSTS MONEY, REQUIRES NETWORK
+### LLM Processing (OpenAI) - ONE CALL PER WORD
 
 ```mermaid
 flowchart LR
-    subgraph LLM["LLM API CALLS"]
-        A[Manual Word Input] --> B[detect_pos]
-
-        C[Any Word] --> D[enrich]
-        D --> E[Translations]
-        D --> F[Gender]
-        D --> G[Plural]
-        D --> H[Verb Conjugations]
+    subgraph LLM["LLM API (Single Call)"]
+        A[Word + POS + Context] --> B[Unified Enrichment]
+        B --> C[Translations]
+        B --> D[Gender if NOUN]
+        B --> E[Plural if NOUN]
+        B --> F[Conjugations if VERB]
     end
 
     style LLM fill:#fff0e6
 ```
+
+---
+
+## Input Validation
+
+Words must pass validation before processing:
+
+```mermaid
+flowchart TD
+    A[Input Word] --> B{Empty?}
+    B -->|Yes| C[Reject]
+    B -->|No| D{Alphabetic only?}
+    D -->|No| E[Reject]
+    D -->|Yes| F[Process]
+
+    style C fill:#ffcccc
+    style E fill:#ffcccc
+    style F fill:#ccffcc
+```
+
+**Accepted**: `Hund`, `Größe`, `über`, `Straße`
+**Rejected**: `Wort123`, `Baden-Württemberg`, `test@email`, `word.`
 
 ---
 
@@ -451,57 +389,27 @@ flowchart LR
 |---------|---------|-------------|
 | `openai_api_key` | (required) | OpenAI API key from environment |
 | `openai_model` | `gpt-5-mini` | Model to use for all LLM calls |
-| `dictionary_enabled` | `True` | Enable local dictionary lookup |
+| `spacy_model` | `de_core_news_lg` | German spaCy model for tokenization |
 
 ---
 
-## JSON Schemas (Used by LLM)
+## API Call Comparison
 
-### NOUN_SCHEMA
-```json
-{
-  "properties": {
-    "lemma": {"type": "string"},
-    "gender": {"type": "string", "enum": ["der", "die", "das"]},
-    "plural": {"type": "string"},
-    "translations": {"type": "array", "items": {"type": "string"}}
-  },
-  "required": ["lemma", "gender", "plural", "translations"]
-}
+### Before (Multiple Calls)
+```
+vocab add "Hund":
+  1. detect_pos() -> LLM call
+  2. validate_lemma() -> LLM call (sometimes)
+  3. enrich() -> LLM call
+  = 2-3 API calls per word
 ```
 
-### VERB_SCHEMA
-```json
-{
-  "properties": {
-    "lemma": {"type": "string"},
-    "preterite": {"type": "string"},
-    "past_participle": {"type": "string"},
-    "auxiliary": {"type": "string", "enum": ["haben", "sein"]},
-    "translations": {"type": "array", "items": {"type": "string"}}
-  },
-  "required": ["lemma", "preterite", "past_participle", "auxiliary", "translations"]
-}
+### After (Single Call)
+```
+vocab add "Hund":
+  1. analyze_word() -> spaCy (local)
+  2. enrich() -> LLM call
+  = 1 API call per word
 ```
 
-### WORD_SCHEMA
-```json
-{
-  "properties": {
-    "lemma": {"type": "string"},
-    "translations": {"type": "array", "items": {"type": "string"}}
-  },
-  "required": ["lemma", "translations"]
-}
-```
-
-### POS_DETECTION_SCHEMA
-```json
-{
-  "properties": {
-    "pos": {"type": "string", "enum": ["NOUN", "VERB", "ADJ", "ADV", "ADP"]},
-    "lemma": {"type": "string"}
-  },
-  "required": ["pos", "lemma"]
-}
-```
+This reduces API costs by 60-70% and improves response time.

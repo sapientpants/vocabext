@@ -175,6 +175,7 @@ async def _process_file(file_path: Path, skip_enrichment: bool) -> None:
                             translations=json.dumps(enrichment.translations)
                             if enrichment and enrichment.translations
                             else None,
+                            lemma_source="spacy",  # Lemma comes from spaCy tokenizer
                         )
                         session.add(word)
                         new_words_created += 1

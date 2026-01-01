@@ -27,6 +27,7 @@ from app.services.events import (
     revert_to_event,
     undo_last_change,
 )
+from app.services.tokenizer import Tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -307,6 +308,12 @@ def add_word(
     run_async(_add_word(word, context))
 
 
+def _is_valid_german_word(word: str) -> bool:
+    """Check if word contains only alphabetic characters (including German umlauts and ß)."""
+    # Python's str.isalpha() correctly handles German characters (äöüß etc.)
+    return word.isalpha()
+
+
 async def _add_word(word: str, context: str) -> None:
     """Async implementation of add command."""
     word = word.strip()
@@ -314,22 +321,46 @@ async def _add_word(word: str, context: str) -> None:
         error_console.print("[error]Word cannot be empty[/]")
         raise typer.Exit(1)
 
+    # Validate word contains only alphabetic characters
+    if not _is_valid_german_word(word):
+        error_console.print(
+            "[error]Word must contain only alphabetic characters (including German umlauts)[/]"
+        )
+        raise typer.Exit(1)
+
     console.print(f"\n[bold]Adding word:[/] {word}\n")
 
+    # Pre-load spaCy model if needed
+    if not is_model_loaded():
+        console.print("[dim]Loading language model...[/]", end="", highlight=False)
+        preload_model()
+        console.print(" [green]done[/]")
+
     async with async_session() as session:
-        # Step 1: Detect POS and enrich
+        # Step 1: Use spaCy to detect POS and normalize lemma (same as process file)
+        tokenizer = Tokenizer()
         enricher = Enricher()
         pos: str | None = None
         enrichment: EnrichmentResult | None = None
 
         with create_simple_progress() as progress:
-            task = progress.add_task("Detecting part of speech and enriching...")
+            task = progress.add_task("Analyzing word...")
 
             try:
-                pos, enrichment = await enricher.enrich_word(word, context, session)
-                progress.update(task, description=f"[green]Detected: {pos}[/]")
+                # Use spaCy for POS detection (same pipeline as document processing)
+                token_info = tokenizer.analyze_word(word, context)
+                if token_info is None:
+                    raise ValueError(f"Could not analyze word: {word}")
+
+                pos = token_info.pos
+                lemma = token_info.lemma
+                progress.update(task, description=f"[dim]Detected: {pos}[/] Enriching...")
+
+                # Single LLM call for enrichment (translations + grammar)
+                enrichment = await enricher.enrich(lemma, pos, token_info.context_sentence)
+                progress.update(task, description=f"[green]Complete: {pos}[/]")
             except Exception as e:
-                progress.update(task, description="[red]Enrichment failed[/]")
+                progress.update(task, description="[red]Failed[/]")
                 logger.exception("Failed to enrich word")
                 error_console.print(f"[error]Failed to enrich word: {e}[/]")
                 raise typer.Exit(1) from e
@@ -338,8 +369,8 @@ async def _add_word(word: str, context: str) -> None:
             error_console.print("[error]Enrichment returned no result[/]")
             raise typer.Exit(1)
 
-        # Use enriched lemma if available
-        lemma = enrichment.lemma or word
+        # Use the lemma from spaCy analysis (enrichment.lemma is LLM's version, not authoritative)
+        # This matches the process file pipeline where spaCy determines the lemma
 
         # Step 2: Check for duplicate
         # Include gender for nouns to align with database unique constraint on (lemma, pos, gender)
@@ -376,7 +407,7 @@ async def _add_word(word: str, context: str) -> None:
             synonyms=json.dumps(enrichment.synonyms) if enrichment.synonyms else None,
             frequency=enrichment.frequency,
             ipa=enrichment.ipa,
-            lemma_source=enrichment.lemma_source,
+            lemma_source="spacy",  # Lemma comes from spaCy tokenizer
             dictionary_url=enrichment.dictionary_url,
             needs_review=needs_review,
             review_reason=review_reason,

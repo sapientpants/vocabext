@@ -550,3 +550,250 @@ class TestTokenizerConstants:
         assert "zweiter" in Tokenizer.ORDINAL_LEMMAS
         assert "dritter" in Tokenizer.ORDINAL_LEMMAS
         assert "zwanzigster" in Tokenizer.ORDINAL_LEMMAS
+
+
+class TestAnalyzeWord:
+    """Tests for the analyze_word method."""
+
+    @pytest.fixture
+    def mock_spacy(self):
+        """Create mock for spacy.load."""
+        with patch("spacy.load") as mock_load:
+            yield mock_load
+
+    def _create_mock_token(
+        self,
+        text: str,
+        lemma: str,
+        pos: str,
+        is_alpha: bool = True,
+        like_num: bool = False,
+        sent_text: str = "",
+    ) -> MagicMock:
+        """Create a mock token with given attributes."""
+        token = MagicMock()
+        token.text = text
+        token.lemma_ = lemma
+        token.pos_ = pos
+        token.is_alpha = is_alpha
+        token.like_num = like_num
+
+        # Mock sentence
+        sent = MagicMock()
+        sent.text = sent_text or f"Context with {text}."
+        token.sent = sent
+
+        return token
+
+    def _setup_tokenizer(self, mock_spacy: MagicMock, tokens: list[MagicMock]) -> Tokenizer:
+        """Setup tokenizer with mock nlp returning given tokens."""
+        mock_doc = MagicMock()
+        mock_doc.__iter__ = lambda self: iter(tokens)
+
+        mock_nlp = MagicMock(return_value=mock_doc)
+        mock_spacy.return_value = mock_nlp
+
+        tokenizer = Tokenizer()
+        tokenizer._nlp = mock_nlp
+        return tokenizer
+
+    def test_analyze_noun_word(self, mock_spacy):
+        """Should analyze a noun and return correct TokenInfo."""
+        mock_token = self._create_mock_token("Hund", "Hund", "NOUN")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        result = tokenizer.analyze_word("Hund", "")
+
+        assert result is not None
+        assert result.pos == "NOUN"
+        assert result.lemma == "Hund"
+        assert result.surface_form == "Hund"
+
+    def test_analyze_verb_word(self, mock_spacy):
+        """Should analyze a verb and return lowercase lemma."""
+        mock_token = self._create_mock_token("arbeitet", "arbeiten", "VERB")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        result = tokenizer.analyze_word("arbeitet", "Er arbeitet viel.")
+
+        assert result is not None
+        assert result.pos == "VERB"
+        assert result.lemma == "arbeiten"
+
+    def test_analyze_adjective_word(self, mock_spacy):
+        """Should analyze an adjective and convert to base form."""
+        mock_token = self._create_mock_token("schneller", "schnell", "ADJ")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        result = tokenizer.analyze_word("schneller", "")
+
+        assert result is not None
+        assert result.pos == "ADJ"
+        assert result.lemma == "schnell"
+
+    def test_analyze_adverb_word(self, mock_spacy):
+        """Should analyze an adverb and lowercase."""
+        mock_token = self._create_mock_token("Schnell", "schnell", "ADV")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        result = tokenizer.analyze_word("Schnell", "")
+
+        assert result is not None
+        assert result.pos == "ADV"
+        assert result.lemma == "schnell"
+
+    def test_analyze_preposition_word(self, mock_spacy):
+        """Should analyze a preposition and expand contractions."""
+        mock_token = self._create_mock_token("zum", "zum", "ADP")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        result = tokenizer.analyze_word("zum", "")
+
+        assert result is not None
+        assert result.pos == "ADP"
+        assert result.lemma == "zu"
+
+    def test_analyze_with_context(self, mock_spacy):
+        """Should use context for analysis."""
+        mock_token = self._create_mock_token("Hund", "Hund", "NOUN", sent_text="Der Hund bellt.")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        result = tokenizer.analyze_word("Hund", "Der Hund bellt.")
+
+        assert result is not None
+        assert result.context_sentence == "Der Hund bellt."
+
+    def test_analyze_unknown_word_defaults_to_noun(self, mock_spacy):
+        """Should default to NOUN for unknown words."""
+        # No matching token found
+        mock_token = self._create_mock_token("anders", "anders", "INTJ")  # Irrelevant POS
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        result = tokenizer.analyze_word("Unbekannt", "")
+
+        assert result is not None
+        assert result.pos == "NOUN"
+        assert result.lemma == "Unbekannt"  # Capitalized for noun
+
+    def test_analyze_participle_converts_to_infinitive(self, mock_spacy):
+        """Should convert verb participle to infinitive."""
+        # spaCy returns "gemacht" as lemma for participle "gemacht"
+        mock_token = self._create_mock_token("gemacht", "gemacht", "VERB")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        result = tokenizer.analyze_word("gemacht", "")
+
+        assert result is not None
+        assert result.pos == "VERB"
+        assert result.lemma == "machen"  # ge-mach-t -> machen
+
+    def test_analyze_diminutive_strips_suffix(self, mock_spacy):
+        """Should strip diminutive suffix from nouns."""
+        mock_token = self._create_mock_token("Häuschen", "Häuschen", "NOUN")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        result = tokenizer.analyze_word("Häuschen", "")
+
+        assert result is not None
+        assert result.pos == "NOUN"
+        assert result.lemma == "Haus"
+
+    def test_analyze_skips_non_alpha_tokens(self, mock_spacy):
+        """Should skip non-alphabetic tokens."""
+        mock_token = self._create_mock_token("123", "123", "NOUN", is_alpha=False)
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        result = tokenizer.analyze_word("Wort", "")
+
+        # Falls back to default NOUN
+        assert result is not None
+        assert result.pos == "NOUN"
+
+    def test_analyze_fallback_without_context(self, mock_spacy):
+        """Should try without context if word not found in context."""
+        # First call with context returns no match
+        mock_token_no_match = self._create_mock_token("anders", "anders", "INTJ")
+        mock_token_match = self._create_mock_token("Hund", "Hund", "NOUN")
+
+        mock_nlp = MagicMock()
+        call_count = [0]
+
+        def mock_call(text):
+            call_count[0] += 1
+            mock_doc = MagicMock()
+            # First call with context, second call without
+            if call_count[0] == 1:
+                mock_doc.__iter__ = lambda self: iter([mock_token_no_match])
+            else:
+                mock_doc.__iter__ = lambda self: iter([mock_token_match])
+            return mock_doc
+
+        mock_nlp.side_effect = mock_call
+        mock_spacy.return_value = mock_nlp
+
+        tokenizer = Tokenizer()
+        tokenizer._nlp = mock_nlp
+
+        result = tokenizer.analyze_word("Hund", "Some context sentence.")
+
+        assert result is not None
+        assert call_count[0] == 2  # Called twice (with and without context)
+
+    def test_analyze_word_case_insensitive_match(self, mock_spacy):
+        """Should match word case-insensitively."""
+        mock_token = self._create_mock_token("hund", "Hund", "NOUN")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        result = tokenizer.analyze_word("HUND", "")
+
+        assert result is not None
+        assert result.pos == "NOUN"
+        assert result.lemma == "Hund"
+
+    def test_analyze_matches_by_lemma(self, mock_spacy):
+        """Should match word by lemma as well as text."""
+        mock_token = self._create_mock_token("Hunde", "hund", "NOUN")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        result = tokenizer.analyze_word("hund", "")
+
+        assert result is not None
+        assert result.pos == "NOUN"
+        assert result.lemma == "Hund"  # Capitalized noun
+
+    def test_analyze_skips_matching_token_with_irrelevant_pos(self, mock_spacy):
+        """Should skip matching token if POS is not in RELEVANT_POS."""
+        # Token matches but has irrelevant POS (PUNCT, DET, etc.)
+        mock_token_punct = self._create_mock_token(".", ".", "PUNCT")
+        mock_token_noun = self._create_mock_token("Wort", "Wort", "NOUN")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token_punct, mock_token_noun])
+
+        result = tokenizer.analyze_word(".", "")
+
+        # Should fallback to default NOUN since PUNCT is skipped
+        assert result is not None
+        assert result.pos == "NOUN"
+
+    def test_analyze_skips_matching_token_with_like_num(self, mock_spacy):
+        """Should skip matching token if it looks like a number."""
+        mock_token = self._create_mock_token("2023", "2023", "NOUN", like_num=True)
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        result = tokenizer.analyze_word("2023", "")
+
+        # Should fallback to default NOUN since number-like is skipped
+        assert result is not None
+        assert result.pos == "NOUN"
+
+    def test_analyze_unknown_word_capitalizes_for_noun(self, mock_spacy):
+        """Should capitalize default lemma for unknown words (defaults to NOUN)."""
+        # No matching token
+        mock_token = self._create_mock_token("anders", "anders", "INTJ")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        result = tokenizer.analyze_word("wort", "")
+
+        assert result is not None
+        assert result.pos == "NOUN"
+        # Default to NOUN, which gets capitalized (German nouns are capitalized)
+        assert result.lemma == "Wort"
