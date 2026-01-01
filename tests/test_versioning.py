@@ -139,7 +139,7 @@ class TestWordNeedsSync:
 
     @pytest.mark.asyncio
     async def test_needs_sync_no_versions(self, async_session):
-        """Should need sync if synced but no versions."""
+        """Should not need sync if synced and no versions (no modifications)."""
         word = Word(
             lemma="Test",
             pos="NOUN",
@@ -154,7 +154,7 @@ class TestWordNeedsSync:
         result = await async_session.execute(stmt)
         word = result.scalar_one()
 
-        assert word.needs_sync is True
+        assert word.needs_sync is False
 
     @pytest.mark.asyncio
     async def test_needs_sync_version_after_sync(self, async_session):

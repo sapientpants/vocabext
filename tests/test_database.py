@@ -20,9 +20,7 @@ class TestDatabase:
             )
             tables = [row[0] for row in result.fetchall()]
 
-        assert "documents" in tables
         assert "words" in tables
-        assert "extractions" in tables
 
     @pytest.mark.asyncio
     async def test_session_yields_async_session(self, async_session):
@@ -32,17 +30,17 @@ class TestDatabase:
     @pytest.mark.asyncio
     async def test_session_can_execute_queries(self, async_session):
         """Should be able to execute queries."""
-        from app.models import Document
+        from app.models import Word
 
-        # Create a document
-        doc = Document(filename="test.pdf", content_hash="testhash")
-        async_session.add(doc)
+        # Create a word
+        word = Word(lemma="Test", pos="NOUN")
+        async_session.add(word)
         await async_session.commit()
 
         # Query it back
-        result = await async_session.get(Document, doc.id)
+        result = await async_session.get(Word, word.id)
         assert result is not None
-        assert result.filename == "test.pdf"
+        assert result.lemma == "Test"
 
 
 class TestBase:

@@ -1,19 +1,25 @@
-"""Central LLM client with rate limiting for all OpenAI API requests."""
+"""Central LLM client with rate limiting and retry logic for OpenAI API requests."""
 
 import asyncio
 import json
 import logging
+import random
 from typing import Any, cast
 
-from openai import AsyncOpenAI
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 # Global semaphore to limit concurrent LLM requests
-# Allows up to 20 parallel requests to balance throughput and API rate limits
 _semaphore: asyncio.Semaphore | None = None
+_CONCURRENCY = 100
+
+# Retry configuration
+_MAX_RETRIES = 3
+_BASE_DELAY = 1.0  # seconds
+_MAX_DELAY = 30.0  # seconds
 
 # Global client instance
 _client: AsyncOpenAI | None = None
@@ -31,8 +37,20 @@ def get_semaphore() -> asyncio.Semaphore:
     """Get or create the global LLM semaphore (lazy init for event loop)."""
     global _semaphore
     if _semaphore is None:
-        _semaphore = asyncio.Semaphore(100)
+        _semaphore = asyncio.Semaphore(_CONCURRENCY)
     return _semaphore
+
+
+def _is_retryable(error: Exception) -> bool:
+    """Check if an error is retryable (transient)."""
+    if isinstance(error, APITimeoutError):
+        return True
+    if isinstance(error, APIConnectionError):
+        return True
+    if isinstance(error, APIStatusError):
+        # Retry on server errors (5xx) and rate limits (429)
+        return bool(error.status_code >= 500 or error.status_code == 429)
+    return False
 
 
 async def chat_completion(
@@ -42,9 +60,10 @@ async def chat_completion(
     model: str | None = None,
 ) -> dict[str, Any]:
     """
-    Make a chat completion request with structured JSON output.
+    Make a request to OpenAI Responses API with structured JSON output.
 
-    Uses global semaphore to limit concurrent requests to 20.
+    Uses global semaphore to limit concurrent requests to 100.
+    Retries transient errors with exponential backoff.
 
     Args:
         prompt: The user prompt to send
@@ -56,29 +75,46 @@ async def chat_completion(
         Parsed JSON response as dict
 
     Raises:
-        APITimeoutError: Request timed out
-        APIStatusError: HTTP error from API
-        APIConnectionError: Cannot connect to API
+        APITimeoutError: Request timed out (after retries exhausted)
+        APIStatusError: HTTP error from API (after retries exhausted)
+        APIConnectionError: Cannot connect to API (after retries exhausted)
         ValueError: Empty or invalid response
     """
     client = get_client()
     model = model or settings.openai_model
+    last_error: Exception | None = None
 
-    response = await client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": schema_name,
-                "strict": True,
-                "schema": schema,
-            },
-        },
-    )
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            async with get_semaphore():
+                response = await client.responses.create(
+                    model=model,
+                    input=[{"role": "user", "content": prompt}],
+                    text={
+                        "format": {
+                            "type": "json_schema",
+                            "name": schema_name,
+                            "strict": True,
+                            "schema": schema,
+                        }
+                    },
+                )
 
-    content = response.choices[0].message.content
-    if not content:
-        raise ValueError("Empty response from OpenAI")
+            content = response.output_text
+            if not content:
+                raise ValueError("Empty response from OpenAI")
 
-    return cast(dict[str, Any], json.loads(content))
+            return cast(dict[str, Any], json.loads(content))
+
+        except Exception as e:
+            last_error = e
+            if attempt < _MAX_RETRIES and _is_retryable(e):
+                # Exponential backoff with jitter
+                delay = min(_BASE_DELAY * (2**attempt) + random.uniform(0, 1), _MAX_DELAY)  # nosec B311
+                logger.debug(f"Retry {attempt + 1}/{_MAX_RETRIES} after {delay:.1f}s: {e}")
+                await asyncio.sleep(delay)
+            else:
+                raise
+
+    # Should not reach here, but satisfy type checker
+    raise last_error  # type: ignore[misc]
