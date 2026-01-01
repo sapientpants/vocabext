@@ -1,9 +1,8 @@
 """Document processing command."""
 
-import hashlib
+import asyncio
 import json
 import logging
-import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,10 +14,10 @@ from app.cli.utils.console import console, error_console
 from app.cli.utils.progress import create_progress, create_simple_progress
 from app.config import settings
 from app.database import async_session
-from app.models import Document, Extraction, Word
-from app.services.enricher import Enricher
+from app.models import Word
+from app.services.enricher import Enricher, EnrichmentResult
 from app.services.extractor import TextExtractor
-from app.services.tokenizer import Tokenizer
+from app.services.tokenizer import TokenInfo, Tokenizer
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,15 +28,6 @@ app = typer.Typer(
     name="process",
     help="Document processing commands",
 )
-
-
-def _compute_file_hash(file_path: Path) -> str:
-    """Compute SHA-256 hash of file content."""
-    sha256 = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            sha256.update(chunk)
-    return sha256.hexdigest()
 
 
 @app.command(name="file")
@@ -62,134 +52,109 @@ def process_file(
     run_async(_process_file(file_path, skip_enrichment))
 
 
+async def _enrich_token(
+    enricher: Enricher, token: TokenInfo
+) -> tuple[TokenInfo, EnrichmentResult | None]:
+    """Enrich a single token with error handling."""
+    try:
+        enrichment = await enricher.enrich(token.lemma, token.pos, token.context_sentence)
+        return token, enrichment
+    except Exception as e:
+        logger.error("Failed to enrich '%s' (%s): %s", token.lemma, token.pos, e)
+        return token, None
+
+
 async def _process_file(file_path: Path, skip_enrichment: bool) -> None:
     """Async implementation of process command."""
     console.print(f"\n[bold]Processing:[/] {file_path.name}\n")
 
-    # Compute content hash
-    content_hash = _compute_file_hash(file_path)
+    try:
+        # Step 1: Extract text
+        with create_simple_progress() as progress:
+            task = progress.add_task("Extracting text...")
+            extractor = TextExtractor(whisper_model=settings.whisper_model)
+            raw_text = await extractor.extract(file_path)
+            progress.update(task, description="[green]Text extracted[/]")
 
-    async with async_session() as session:
-        # Check for duplicate
-        existing = await session.execute(
-            select(Document).where(Document.content_hash == content_hash)
-        )
-        if existing.scalar_one_or_none():
-            error_console.print("[warning]This file has already been processed.[/]")
-            raise typer.Exit(1)
+        text_preview = raw_text[:200] + "..." if len(raw_text) > 200 else raw_text
+        console.print(f"[dim]Preview: {text_preview}[/]\n")
 
-        # Copy file to upload directory
-        dest_path = settings.upload_dir / file_path.name
-        if dest_path.exists():
-            # Add hash prefix to avoid collision
-            dest_path = settings.upload_dir / f"{content_hash[:8]}_{file_path.name}"
+        # Step 2: Tokenize
+        with create_simple_progress() as progress:
+            task = progress.add_task("Tokenizing...")
+            tokenizer = Tokenizer(model_name=settings.spacy_model)
+            tokens = tokenizer.tokenize(raw_text)
+            progress.update(task, description=f"[green]Found {len(tokens)} tokens[/]")
 
-        shutil.copy2(file_path, dest_path)
+        if not tokens:
+            console.print("[warning]No vocabulary tokens found in document.[/]")
+            return
 
-        # Create document record
-        document = Document(
-            filename=dest_path.name,
-            content_hash=content_hash,
-            status="processing",
-        )
-        session.add(document)
-        await session.commit()
-        await session.refresh(document)
+        # Step 3: Identify new vs duplicate tokens
+        console.print(f"\n[info]Processing {len(tokens)} vocabulary items...[/]\n")
 
-        document_id = document.id
-        console.print(f"[dim]Document ID: {document_id}[/]")
-
-        try:
-            # Step 1: Extract text
-            with create_simple_progress() as progress:
-                task = progress.add_task("Extracting text...")
-                extractor = TextExtractor(whisper_model=settings.whisper_model)
-                raw_text = await extractor.extract(dest_path)
-                document.raw_text = raw_text
-                await session.commit()
-                progress.update(task, description="[green]Text extracted[/]")
-
-            text_preview = raw_text[:200] + "..." if len(raw_text) > 200 else raw_text
-            console.print(f"[dim]Preview: {text_preview}[/]\n")
-
-            # Step 2: Tokenize
-            with create_simple_progress() as progress:
-                task = progress.add_task("Tokenizing...")
-                tokenizer = Tokenizer(model_name=settings.spacy_model)
-                tokens = tokenizer.tokenize(raw_text)
-                progress.update(task, description=f"[green]Found {len(tokens)} tokens[/]")
-
-            if not tokens:
-                console.print("[warning]No vocabulary tokens found in document.[/]")
-                document.status = "pending_review"
-                await session.commit()
-                return
-
-            # Step 3: Process tokens and create extractions
-            console.print(f"\n[info]Processing {len(tokens)} vocabulary items...[/]\n")
-
-            enricher = Enricher() if not skip_enrichment else None
+        async with async_session() as session:
+            new_tokens: list[TokenInfo] = []
             duplicates = 0
-            new_words = 0
-            errors = 0
 
-            with create_progress() as progress:
-                task = progress.add_task("Processing tokens...", total=len(tokens))
-
+            with create_simple_progress() as progress:
+                task = progress.add_task("Checking for duplicates...")
                 for token in tokens:
-                    # Check if word already exists
                     existing_word = await _find_existing_word(session, token.lemma, token.pos)
-
                     if existing_word:
                         duplicates += 1
-                        extraction = Extraction(
-                            document_id=document_id,
-                            word_id=existing_word.id,
-                            surface_form=token.surface_form,
-                            lemma=token.lemma,
-                            pos=token.pos,
-                            gender=existing_word.gender,
-                            plural=existing_word.plural,
-                            preterite=existing_word.preterite,
-                            past_participle=existing_word.past_participle,
-                            auxiliary=existing_word.auxiliary,
-                            translations=existing_word.translations,
-                            context_sentence=token.context_sentence,
-                            status="duplicate",
-                        )
-                        session.add(extraction)
-                        progress.update(
-                            task, advance=1, description=f"[dim]Duplicate: {token.lemma}[/]"
-                        )
                     else:
-                        # Enrich new word via LLM
-                        enrichment = None
-                        if enricher:
-                            try:
-                                enrichment = await enricher.enrich(
-                                    token.lemma, token.pos, token.context_sentence
-                                )
-                                if enrichment.error:
-                                    errors += 1
-                                    logger.warning(
-                                        "Enrichment error for '%s': %s",
-                                        token.lemma,
-                                        enrichment.error,
-                                    )
-                            except Exception as e:
-                                errors += 1
-                                logger.error(
-                                    "Failed to enrich '%s' (%s): %s",
-                                    token.lemma,
-                                    token.pos,
-                                    e,
-                                    exc_info=True,
-                                )
+                        new_tokens.append(token)
+                progress.update(task, description=f"[green]Found {len(new_tokens)} new words[/]")
 
-                        new_words += 1
-                        extraction = Extraction(
-                            document_id=document_id,
-                            surface_form=token.surface_form,
+            # Step 4: Parallel enrichment for new tokens
+            enricher = Enricher() if not skip_enrichment else None
+            enrichments: list[tuple[TokenInfo, EnrichmentResult | None]] = []
+            errors = 0
+
+            if new_tokens and enricher:
+                with create_progress() as progress:
+                    task = progress.add_task("Enriching new words...", total=len(new_tokens))
+
+                    # Run all enrichments in parallel (semaphore in llm.py limits concurrency)
+                    # return_exceptions=True ensures one failure doesn't cancel other tasks
+                    raw_results = await asyncio.gather(
+                        *[_enrich_token(enricher, t) for t in new_tokens],
+                        return_exceptions=True,
+                    )
+
+                    # Process results, handling both successful enrichments and exceptions
+                    for i, result in enumerate(raw_results):
+                        if isinstance(result, Exception):
+                            # Unexpected exception not caught by _enrich_token
+                            errors += 1
+                            logger.exception(
+                                "Unexpected enrichment exception for '%s'",
+                                new_tokens[i].lemma,
+                            )
+                            enrichments.append((new_tokens[i], None))
+                        else:
+                            token, enrichment = result
+                            if enrichment is None:
+                                errors += 1
+                            elif hasattr(enrichment, "error") and enrichment.error:
+                                errors += 1
+                                logger.warning(
+                                    "Enrichment error for '%s': %s", token.lemma, enrichment.error
+                                )
+                            enrichments.append((token, enrichment))
+                        progress.update(task, advance=1)
+            elif new_tokens:
+                # Skip enrichment - just pair tokens with None
+                enrichments = [(t, None) for t in new_tokens]
+
+            # Step 5: Create Word records for new tokens
+            new_words_created = 0
+            if enrichments:
+                with create_simple_progress() as progress:
+                    task = progress.add_task("Creating word records...")
+                    for token, enrichment in enrichments:
+                        word = Word(
                             lemma=token.lemma,
                             pos=token.pos,
                             gender=enrichment.gender if enrichment else None,
@@ -200,37 +165,27 @@ async def _process_file(file_path: Path, skip_enrichment: bool) -> None:
                             translations=json.dumps(enrichment.translations)
                             if enrichment and enrichment.translations
                             else None,
-                            context_sentence=token.context_sentence,
-                            status="pending",
                         )
-                        session.add(extraction)
-                        progress.update(
-                            task, advance=1, description=f"[green]New: {token.lemma}[/]"
-                        )
+                        session.add(word)
+                        new_words_created += 1
 
                     await session.commit()
+                    progress.update(
+                        task, description=f"[green]Created {new_words_created} words[/]"
+                    )
 
-            # Update document status
-            document.status = "pending_review"
-            await session.commit()
+        console.print()
+        console.print("[success]Processing complete![/]")
+        console.print(f"  New words: [green]{new_words_created}[/]")
+        console.print(f"  Duplicates: [dim]{duplicates}[/]")
+        if errors:
+            console.print(f"  Enrichment errors: [yellow]{errors}[/]")
+        console.print()
+        console.print("[info]Run 'vocabext sync' to sync new words to Anki.[/]")
 
-            console.print()
-            console.print("[success]Processing complete![/]")
-            console.print(f"  New words: [green]{new_words}[/]")
-            console.print(f"  Duplicates: [dim]{duplicates}[/]")
-            if errors:
-                console.print(f"  Enrichment errors: [yellow]{errors}[/]")
-            console.print()
-            console.print(
-                f"[info]Run 'vocabext review --document-id {document_id}' to review extractions.[/]"
-            )
-
-        except Exception as e:
-            error_console.print(f"[error]Processing failed: {e}[/]")
-            document.status = "error"
-            document.error_message = str(e)
-            await session.commit()
-            raise typer.Exit(1) from None
+    except Exception as e:
+        error_console.print(f"[error]Processing failed: {e}[/]")
+        raise typer.Exit(1) from None
 
 
 async def _find_existing_word(session: "AsyncSession", lemma: str, pos: str) -> Word | None:

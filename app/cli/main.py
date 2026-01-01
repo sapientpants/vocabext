@@ -2,7 +2,7 @@
 
 import typer
 
-from app.cli.commands import process, review, status, sync, vocabulary
+from app.cli.commands import process, status, sync, vocabulary
 from app.cli.utils.async_runner import run_async
 from app.cli.utils.console import error_console
 from app.config import settings
@@ -42,10 +42,6 @@ app.add_typer(vocabulary.app, name="vocab")
 app.command(name="process", help="Process a document file for vocabulary extraction")(
     process.process_file
 )
-
-# Register review commands
-app.add_typer(review.app, name="review")
-
 
 # Register sync command
 app.command(name="sync", help="Sync all unsynced words to Anki")(sync.sync_run)

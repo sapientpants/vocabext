@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from app.cli.utils.async_runner import run_async
 from app.cli.utils.console import console
 from app.database import async_session
-from app.models import Document, Extraction, Word
+from app.models import Word
 from app.services.anki import AnkiService
 
 
@@ -22,22 +22,6 @@ async def _status() -> None:
     anki_stats = await anki.get_sync_stats()
 
     async with async_session() as session:
-        # Count documents
-        doc_result = await session.execute(select(func.count(Document.id)))
-        doc_count: int = doc_result.scalar() or 0
-
-        # Count pending documents
-        pending_docs_result = await session.execute(
-            select(func.count(Document.id)).where(Document.status == "pending_review")
-        )
-        pending_docs: int = pending_docs_result.scalar() or 0
-
-        # Count pending extractions
-        pending_ext_result = await session.execute(
-            select(func.count(Extraction.id)).where(Extraction.status == "pending")
-        )
-        pending_extractions: int = pending_ext_result.scalar() or 0
-
         # Count words
         word_result = await session.execute(select(func.count(Word.id)))
         word_count: int = word_result.scalar() or 0
@@ -59,12 +43,6 @@ async def _status() -> None:
     vocab_table.add_column("Label", style="bold")
     vocab_table.add_column("Value", justify="right")
 
-    vocab_table.add_row("Documents", str(doc_count))
-    vocab_table.add_row("Pending Review", f"[yellow]{pending_docs}[/]" if pending_docs else "0")
-    vocab_table.add_row(
-        "Pending Extractions", f"[yellow]{pending_extractions}[/]" if pending_extractions else "0"
-    )
-    vocab_table.add_row("", "")
     vocab_table.add_row("Words", str(word_count))
     vocab_table.add_row("Synced to Anki", f"[green]{synced_count}[/]")
     vocab_table.add_row(

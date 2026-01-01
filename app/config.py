@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = ""
-    openai_model: str = "gpt-4.1-mini"
+    openai_model: str = "gpt-5-mini"
 
     # AnkiConnect
     anki_connect_url: str = "http://localhost:8765"
@@ -57,6 +57,11 @@ class Settings(BaseSettings):
 
     # Upload limits
     max_upload_size_mb: int = 100  # Maximum upload size in MB
+
+    # Dictionary service
+    dictionary_enabled: bool = True
+    dictionary_cache_ttl_days: int = 30
+    dictionary_cache_not_found_ttl_days: int = 7
 
 
 settings = Settings()
