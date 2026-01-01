@@ -97,6 +97,23 @@ VALIDATION_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+POS_DETECTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "pos": {
+            "type": "string",
+            "enum": ["NOUN", "VERB", "ADJ", "ADV", "ADP"],
+            "description": "Part of speech",
+        },
+        "lemma": {
+            "type": "string",
+            "description": "Correct base/dictionary form of the word",
+        },
+    },
+    "required": ["pos", "lemma"],
+    "additionalProperties": False,
+}
+
 
 class EnrichmentResult(BaseModel):
     """Result of LLM enrichment for a word."""
@@ -477,3 +494,75 @@ Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-,
             result.error = str(e)
 
         return result
+
+    async def detect_pos(self, word: str, context: str = "") -> tuple[str, str]:
+        """
+        Detect part of speech and normalize lemma for a German word.
+
+        Uses LLM to determine the most likely POS for the word, which is more
+        reliable than spaCy for isolated words without context.
+
+        Args:
+            word: The German word to analyze
+            context: Optional context sentence for better accuracy
+
+        Returns:
+            Tuple of (pos, normalized_lemma)
+
+        Raises:
+            Exception if LLM call fails
+        """
+        context_info = f'\nContext: "{context}"' if context else ""
+        prompt = f"""Analyze this German word and determine its part of speech.
+
+Word: {word}{context_info}
+
+Determine the most likely part of speech for this word:
+- NOUN: A noun (Substantiv) - names a person, place, thing, or concept
+- VERB: A verb (Verb) - describes an action or state
+- ADJ: An adjective (Adjektiv) - describes a noun
+- ADV: An adverb (Adverb) - modifies a verb, adjective, or other adverb
+- ADP: A preposition (Präposition) - shows relationship between words
+
+Also provide the correct base/dictionary form (lemma):
+- For nouns: singular nominative form (e.g., "Arbeit" not "Arbeiten")
+- For verbs: infinitive form (e.g., "arbeiten" not "arbeitete")
+- For adjectives: base form (e.g., "schnell" not "schneller")"""
+
+        data = await self._call_chat_api(prompt, POS_DETECTION_SCHEMA, "pos_detection")
+
+        pos = data.get("pos", "NOUN")
+        lemma = data.get("lemma", word)
+        lemma = strip_article(lemma)
+
+        logger.info(f"POS detection for '{word}': {pos}, lemma='{lemma}'")
+        return pos, lemma
+
+    async def enrich_word(
+        self,
+        word: str,
+        context: str = "",
+        session: AsyncSession | None = None,
+    ) -> tuple[str, EnrichmentResult]:
+        """
+        Full enrichment pipeline: detect POS, then enrich.
+
+        This is the unified entry point for adding words, whether from CLI input
+        or other sources. It automatically determines the part of speech and
+        then enriches the word with grammatical information.
+
+        Args:
+            word: The German word to enrich
+            context: Optional context sentence for better POS detection and enrichment
+            session: Database session for dictionary caching
+
+        Returns:
+            Tuple of (detected_pos, enrichment_result)
+        """
+        # Step 1: Detect POS and normalize lemma
+        pos, lemma = await self.detect_pos(word, context)
+
+        # Step 2: Enrich with detected POS using the full dictionary+LLM pipeline
+        result = await self.enrich_with_dictionary(lemma, pos, context, session)
+
+        return pos, result
