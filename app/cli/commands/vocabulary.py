@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 
 from app.cli.utils.async_runner import run_async
 from app.cli.utils.console import console, error_console
-from app.cli.utils.progress import create_progress
+from app.cli.utils.progress import create_progress, create_simple_progress
 from app.database import async_session
 from app.models import Word, WordEvent, WordVersion
 from app.services.dictionary import is_model_loaded, preload_model
@@ -290,6 +290,134 @@ async def _list_words(
             )
 
         console.print(table)
+
+
+@app.command(name="add")
+def add_word(
+    word: str = typer.Argument(..., help="German word to add"),
+    context: str = typer.Option(
+        "", "--context", "-c", help="Context sentence for better POS detection"
+    ),
+) -> None:
+    """Add a single word to the vocabulary.
+
+    Automatically detects the part of speech and enriches the word
+    with grammatical information, just like words from uploaded files.
+    """
+    run_async(_add_word(word, context))
+
+
+async def _add_word(word: str, context: str) -> None:
+    """Async implementation of add command."""
+    word = word.strip()
+    if not word:
+        error_console.print("[error]Word cannot be empty[/]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]Adding word:[/] {word}\n")
+
+    async with async_session() as session:
+        # Step 1: Detect POS and enrich
+        enricher = Enricher()
+        pos: str | None = None
+        enrichment: EnrichmentResult | None = None
+
+        with create_simple_progress() as progress:
+            task = progress.add_task("Detecting part of speech and enriching...")
+
+            try:
+                pos, enrichment = await enricher.enrich_word(word, context, session)
+                progress.update(task, description=f"[green]Detected: {pos}[/]")
+            except Exception as e:
+                progress.update(task, description="[red]Enrichment failed[/]")
+                logger.exception("Failed to enrich word")
+                error_console.print(f"[error]Failed to enrich word: {e}[/]")
+                raise typer.Exit(1) from e
+
+        if not enrichment:
+            error_console.print("[error]Enrichment returned no result[/]")
+            raise typer.Exit(1)
+
+        # Use enriched lemma if available
+        lemma = enrichment.lemma or word
+
+        # Step 2: Check for duplicate
+        # Include gender for nouns to align with database unique constraint on (lemma, pos, gender)
+        conditions = [Word.lemma == lemma, Word.pos == pos]
+        if pos == "NOUN" and enrichment.gender is not None:
+            conditions.append(Word.gender == enrichment.gender)
+
+        stmt = select(Word).where(*conditions)
+        result = await session.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            error_console.print(
+                f"[warning]Word already exists: {existing.display_word} (ID: {existing.id})[/]"
+            )
+            if existing.translations_list:
+                console.print(f"[dim]Translations: {', '.join(existing.translations_list)}[/]")
+            raise typer.Exit(1)
+
+        # Step 3: Create Word record
+        needs_review = bool(enrichment.error)
+        review_reason = enrichment.error if enrichment.error else None
+
+        new_word = Word(
+            lemma=lemma,
+            pos=pos,
+            gender=enrichment.gender,
+            plural=enrichment.plural,
+            preterite=enrichment.preterite,
+            past_participle=enrichment.past_participle,
+            auxiliary=enrichment.auxiliary,
+            translations=json.dumps(enrichment.translations) if enrichment.translations else None,
+            definition_de=enrichment.definition_de,
+            synonyms=json.dumps(enrichment.synonyms) if enrichment.synonyms else None,
+            frequency=enrichment.frequency,
+            ipa=enrichment.ipa,
+            lemma_source=enrichment.lemma_source,
+            dictionary_url=enrichment.dictionary_url,
+            needs_review=needs_review,
+            review_reason=review_reason,
+        )
+        session.add(new_word)
+        await session.flush()
+
+        # Step 4: Record creation event
+        await record_event(
+            session,
+            new_word,
+            "CREATED",
+            source="cli",
+            reason="Added via 'vocab add'",
+        )
+
+        await session.commit()
+
+        # Step 5: Display result
+        console.print()
+        console.print(f"[success]Added word: {new_word.display_word}[/]")
+        console.print(f"  ID: [dim]{new_word.id}[/]")
+        console.print(f"  POS: [pos]{new_word.pos}[/]")
+
+        if new_word.grammar_info:
+            console.print(f"  Grammar: {new_word.grammar_info}")
+
+        if new_word.translations_list:
+            console.print(f"  Translations: {', '.join(new_word.translations_list)}")
+
+        if new_word.ipa:
+            console.print(f"  IPA: {new_word.ipa}")
+
+        if new_word.frequency is not None:
+            console.print(f"  Frequency: {new_word.frequency:.1f}/6")
+
+        if new_word.needs_review:
+            console.print(f"  [warning]Needs review: {new_word.review_reason}[/]")
+
+        console.print()
+        console.print("[info]Run 'vocabext sync' to sync to Anki.[/]")
 
 
 @app.command(name="validate")
