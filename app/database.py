@@ -29,7 +29,7 @@ engine = create_async_engine(
 # Enable foreign key constraints for SQLite connections
 # Use sync_engine to properly intercept aiosqlite connections
 @event.listens_for(engine.sync_engine, "connect")
-def _set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
+def _set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:  # pragma: no cover
     """Enable foreign key enforcement for SQLite."""
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")

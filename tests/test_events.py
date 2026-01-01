@@ -142,6 +142,34 @@ class TestGetDeletedWords:
 
         assert len(deleted) == 2
 
+    @pytest.mark.asyncio
+    async def test_get_deleted_words_with_after_filter(self, async_session):
+        """Should filter deletions after a specific time."""
+        from datetime import datetime, timezone
+
+        word1 = Word(lemma="OldDelete", pos="NOUN")
+        async_session.add(word1)
+        await async_session.commit()
+        await async_session.refresh(word1)
+        await record_event(async_session, word1, "DELETED", "test")
+        await async_session.commit()
+
+        # Capture time between deletions
+        cutoff = datetime.now(timezone.utc)
+
+        word2 = Word(lemma="NewDelete", pos="NOUN")
+        async_session.add(word2)
+        await async_session.commit()
+        await async_session.refresh(word2)
+        await record_event(async_session, word2, "DELETED", "test")
+        await async_session.commit()
+
+        # Get only deletions after cutoff
+        deleted = await get_deleted_words(async_session, after=cutoff)
+
+        assert len(deleted) == 1
+        assert deleted[0].lemma == "NewDelete"
+
 
 class TestRevertToEvent:
     """Tests for revert_to_event function."""

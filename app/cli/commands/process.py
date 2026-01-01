@@ -116,34 +116,44 @@ async def _process_file(file_path: Path, skip_enrichment: bool) -> None:
                 with create_progress() as progress:
                     task = progress.add_task("Enriching new words...", total=len(new_tokens))
 
-                    # Run all enrichments in parallel (semaphore in llm.py limits concurrency)
-                    # return_exceptions=True ensures one failure doesn't cancel other tasks
-                    raw_results = await asyncio.gather(
-                        *[_enrich_token(enricher, t) for t in new_tokens],
-                        return_exceptions=True,
-                    )
+                    # Create all enrichment tasks and track which token each task belongs to
+                    task_to_token: dict[
+                        asyncio.Task[tuple[TokenInfo, EnrichmentResult | None]], TokenInfo
+                    ] = {}
+                    for t in new_tokens:
+                        async_task = asyncio.create_task(_enrich_token(enricher, t))
+                        task_to_token[async_task] = t
 
-                    # Process results, handling both successful enrichments and exceptions
-                    for i, result in enumerate(raw_results):
-                        if isinstance(result, Exception):
-                            # Unexpected exception not caught by _enrich_token
-                            errors += 1
-                            logger.exception(
-                                "Unexpected enrichment exception for '%s'",
-                                new_tokens[i].lemma,
-                            )
-                            enrichments.append((new_tokens[i], None))
-                        else:
-                            token, enrichment = result
-                            if enrichment is None:
+                    # Process results as they complete (real-time progress)
+                    pending: set[asyncio.Task[tuple[TokenInfo, EnrichmentResult | None]]] = set(
+                        task_to_token.keys()
+                    )
+                    while pending:
+                        done, pending = await asyncio.wait(
+                            pending, return_when=asyncio.FIRST_COMPLETED
+                        )
+                        for completed_task in done:
+                            token = task_to_token[completed_task]
+                            try:
+                                _, enrichment = completed_task.result()
+                                if enrichment is None:
+                                    errors += 1
+                                elif hasattr(enrichment, "error") and enrichment.error:
+                                    errors += 1
+                                    logger.warning(
+                                        "Enrichment error for '%s': %s",
+                                        token.lemma,
+                                        enrichment.error,
+                                    )
+                                enrichments.append((token, enrichment))
+                            except Exception as e:
+                                # Unexpected exception - we know the token from our mapping
                                 errors += 1
-                            elif hasattr(enrichment, "error") and enrichment.error:
-                                errors += 1
-                                logger.warning(
-                                    "Enrichment error for '%s': %s", token.lemma, enrichment.error
+                                logger.exception(
+                                    "Unexpected enrichment exception for '%s': %s", token.lemma, e
                                 )
-                            enrichments.append((token, enrichment))
-                        progress.update(task, advance=1)
+                                enrichments.append((token, None))
+                            progress.update(task, advance=1)
             elif new_tokens:
                 # Skip enrichment - just pair tokens with None
                 enrichments = [(t, None) for t in new_tokens]

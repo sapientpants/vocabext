@@ -165,6 +165,14 @@ class TestParticipleToInfinitive:
         """Should convert separable verb participles ending in -en."""
         assert tokenizer._participle_to_infinitive("aufgestanden") == "aufstanden"
 
+    def test_separable_verb_prefix_match_stem_neither_t_nor_en(self, tokenizer):
+        """Should continue loop when prefix+ge matches but stem ends in neither t nor en."""
+        # "aufgebroch" matches "auf" + "ge", stem is "broch" (ends in neither t nor en)
+        # Falls through to check regular ge patterns
+        result = tokenizer._participle_to_infinitive("aufgebroch")
+        # Since it doesn't match any full pattern, returns None
+        assert result is None
+
     def test_regular_ge_t(self, tokenizer):
         """Should convert regular ge...t participles."""
         # gemacht -> mach + en = machen
@@ -429,6 +437,76 @@ class TestTokenize:
 
         tokens = tokenizer.tokenize("der erste Tag")
         assert len(tokens) == 0
+
+    def test_skips_participles_as_nouns(self, mock_spacy):
+        """Should skip participles mistagged as nouns."""
+        # A word that looks like a participle (ge...t pattern)
+        mock_token = self._create_mock_token("Gearbeitet", "gearbeitet", "NOUN")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        tokens = tokenizer.tokenize("Das Gearbeitet")
+        assert len(tokens) == 0
+
+    def test_skips_participles_as_adjectives(self, mock_spacy):
+        """Should skip participles mistagged as adjectives."""
+        mock_token = self._create_mock_token("gespielt", "gespielt", "ADJ")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        tokens = tokenizer.tokenize("gespielt")
+        assert len(tokens) == 0
+
+    def test_skips_feminine_role_nouns(self, mock_spacy):
+        """Should skip feminine forms of role nouns like Lehrerin."""
+        mock_token = self._create_mock_token("Lehrerin", "Lehrerin", "NOUN")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        tokens = tokenizer.tokenize("die Lehrerin")
+        assert len(tokens) == 0
+
+    def test_skips_nominalized_adjectives(self, mock_spacy):
+        """Should skip nominalized adjectives like Liebliche."""
+        mock_token = self._create_mock_token("Freundliche", "Freundliche", "NOUN")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        tokens = tokenizer.tokenize("das Freundliche")
+        assert len(tokens) == 0
+
+    def test_converts_verb_participle_to_infinitive(self, mock_spacy):
+        """Should convert verb participles to infinitive form."""
+        # A verb that looks like a participle
+        mock_token = self._create_mock_token("gespielt", "gespielt", "VERB")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        tokens = tokenizer.tokenize("ich habe gespielt")
+        assert len(tokens) == 1
+        assert tokens[0].lemma == "spielen"  # Converted to infinitive
+
+    def test_verb_non_participle_lowercased(self, mock_spacy):
+        """Should lowercase regular verbs that are not participles."""
+        mock_token = self._create_mock_token("arbeiten", "Arbeiten", "VERB")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        tokens = tokenizer.tokenize("ich will Arbeiten")
+        assert len(tokens) == 1
+        assert tokens[0].lemma == "arbeiten"  # Lowercased
+
+    def test_converts_adjective_to_base_form(self, mock_spacy):
+        """Should convert comparative adjectives to base form."""
+        mock_token = self._create_mock_token("schneller", "schneller", "ADJ")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        tokens = tokenizer.tokenize("er ist schneller")
+        assert len(tokens) == 1
+        assert tokens[0].lemma == "schnell"  # Converted to base form
+
+    def test_adverb_lowercased(self, mock_spacy):
+        """Should lowercase adverbs."""
+        mock_token = self._create_mock_token("Schnell", "Schnell", "ADV")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        tokens = tokenizer.tokenize("Er läuft schnell")
+        assert len(tokens) == 1
+        assert tokens[0].lemma == "schnell"  # Lowercased
 
 
 class TestTokenizerConstants:

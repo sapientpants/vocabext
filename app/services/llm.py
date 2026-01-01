@@ -126,6 +126,6 @@ async def chat_completion(
                 raise
 
     # Should not reach here, but satisfy type checker and static analysis
-    if last_error is not None:
-        raise last_error
-    raise RuntimeError("chat_completion failed without capturing an exception")
+    if last_error is not None:  # pragma: no cover
+        raise last_error  # pragma: no cover
+    raise RuntimeError("chat_completion failed without capturing an exception")  # pragma: no cover
