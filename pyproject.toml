@@ -96,10 +96,11 @@ omit = [
     "app/main.py",  # Entry point, tested via integration
     "app/cli/*",  # CLI commands - tested via integration
     "app/logging_config.py",  # Logging configuration
+    "app/services/dictionary/cache.py",  # DB-dependent cache, tested via integration
 ]
 
 [tool.coverage.report]
-fail_under = 60
+fail_under = 80
 show_missing = true
 exclude_lines = [
     "pragma: no cover",
