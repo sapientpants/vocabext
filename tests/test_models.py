@@ -129,3 +129,115 @@ class TestWord:
         """Should return False when anki_note_id is None."""
         word = Word(lemma="test", pos="NOUN", anki_note_id=None)
         assert word.is_synced is False
+
+
+class TestWordVersionTranslationsList:
+    """Tests for WordVersion.translations_list property."""
+
+    def test_translations_list_valid_json(self):
+        """Should parse valid JSON array."""
+        from app.models import WordVersion
+
+        version = WordVersion(
+            word_id=1,
+            version_number=1,
+            lemma="Test",
+            pos="NOUN",
+            translations='["one", "two"]',
+        )
+        assert version.translations_list == ["one", "two"]
+
+    def test_translations_list_empty(self):
+        """Should return empty list for empty string."""
+        from app.models import WordVersion
+
+        version = WordVersion(
+            word_id=1,
+            version_number=1,
+            lemma="Test",
+            pos="NOUN",
+            translations="",
+        )
+        assert version.translations_list == []
+
+    def test_translations_list_none(self):
+        """Should return empty list for None."""
+        from app.models import WordVersion
+
+        version = WordVersion(
+            word_id=1,
+            version_number=1,
+            lemma="Test",
+            pos="NOUN",
+            translations=None,
+        )
+        assert version.translations_list == []
+
+    def test_translations_list_invalid_json(self):
+        """Should return empty list for invalid JSON."""
+        from app.models import WordVersion
+
+        version = WordVersion(
+            word_id=1,
+            version_number=1,
+            lemma="Test",
+            pos="NOUN",
+            translations="not valid json",
+        )
+        assert version.translations_list == []
+
+
+class TestWordEventTranslationsList:
+    """Tests for WordEvent.translations_list property."""
+
+    def test_translations_list_valid(self):
+        """Should parse valid JSON array."""
+        from app.models import WordEvent
+
+        event = WordEvent(
+            word_id=1,
+            event_type="created",
+            lemma="Test",
+            pos="NOUN",
+            translations='["a", "b"]',
+        )
+        assert event.translations_list == ["a", "b"]
+
+    def test_translations_list_empty(self):
+        """Should return empty list for empty."""
+        from app.models import WordEvent
+
+        event = WordEvent(
+            word_id=1,
+            event_type="created",
+            lemma="Test",
+            pos="NOUN",
+            translations="",
+        )
+        assert event.translations_list == []
+
+    def test_translations_list_none(self):
+        """Should return empty list for None."""
+        from app.models import WordEvent
+
+        event = WordEvent(
+            word_id=1,
+            event_type="created",
+            lemma="Test",
+            pos="NOUN",
+            translations=None,
+        )
+        assert event.translations_list == []
+
+    def test_translations_list_invalid(self):
+        """Should return empty list for invalid JSON."""
+        from app.models import WordEvent
+
+        event = WordEvent(
+            word_id=1,
+            event_type="created",
+            lemma="Test",
+            pos="NOUN",
+            translations="[broken",
+        )
+        assert event.translations_list == []

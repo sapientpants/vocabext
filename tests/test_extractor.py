@@ -156,6 +156,135 @@ class TestPptxExtraction:
 
             assert "Slide text" in result
 
+    def test_extract_pptx_with_notes(self, tmp_path: Path):
+        """Should extract speaker notes from PowerPoint."""
+        import sys
+
+        pptx_file = tmp_path / "test.pptx"
+        pptx_file.write_bytes(b"fake pptx content")
+
+        mock_pptx = MagicMock()
+        mock_slide = MagicMock()
+        mock_shape = MagicMock()
+        mock_shape.text = "Slide text"
+        mock_slide.shapes = [mock_shape]
+        mock_slide.has_notes_slide = True
+        mock_notes_frame = MagicMock()
+        mock_notes_frame.text = "Speaker notes here"
+        mock_slide.notes_slide.notes_text_frame = mock_notes_frame
+        mock_pptx.Presentation.return_value.slides = [mock_slide]
+
+        with patch.dict(sys.modules, {"pptx": mock_pptx}):
+            extractor = TextExtractor()
+            result = extractor._extract_pptx_sync(pptx_file)
+
+            assert "Slide text" in result
+            assert "[Notes: Speaker notes here]" in result
+
+
+class TestPptxEdgeCases:
+    """Tests for PPTX edge cases."""
+
+    def test_extract_pptx_shape_without_text_attr(self, tmp_path: Path):
+        """Should skip shapes without text attribute."""
+        import sys
+
+        pptx_file = tmp_path / "test.pptx"
+        pptx_file.write_bytes(b"fake pptx content")
+
+        mock_pptx = MagicMock()
+        mock_slide = MagicMock()
+        # Shape without text attribute
+        mock_shape_no_text = MagicMock(spec=[])  # No 'text' attribute
+        mock_slide.shapes = [mock_shape_no_text]
+        mock_slide.has_notes_slide = False
+        mock_pptx.Presentation.return_value.slides = [mock_slide]
+
+        with patch.dict(sys.modules, {"pptx": mock_pptx}):
+            extractor = TextExtractor()
+            result = extractor._extract_pptx_sync(pptx_file)
+
+            # Should return empty since no valid shapes
+            assert result == ""
+
+    def test_extract_pptx_shape_with_empty_text(self, tmp_path: Path):
+        """Should skip shapes with empty text."""
+        import sys
+
+        pptx_file = tmp_path / "test.pptx"
+        pptx_file.write_bytes(b"fake pptx content")
+
+        mock_pptx = MagicMock()
+        mock_slide = MagicMock()
+        # Shape with empty text
+        mock_shape_empty = MagicMock()
+        mock_shape_empty.text = ""
+        mock_slide.shapes = [mock_shape_empty]
+        mock_slide.has_notes_slide = False
+        mock_pptx.Presentation.return_value.slides = [mock_slide]
+
+        with patch.dict(sys.modules, {"pptx": mock_pptx}):
+            extractor = TextExtractor()
+            result = extractor._extract_pptx_sync(pptx_file)
+
+            # Should return empty since shape text is empty
+            assert result == ""
+
+    def test_extract_pptx_notes_with_empty_text(self, tmp_path: Path):
+        """Should skip notes with empty text."""
+        import sys
+
+        pptx_file = tmp_path / "test.pptx"
+        pptx_file.write_bytes(b"fake pptx content")
+
+        mock_pptx = MagicMock()
+        mock_slide = MagicMock()
+        mock_shape = MagicMock()
+        mock_shape.text = "Slide content"
+        mock_slide.shapes = [mock_shape]
+        mock_slide.has_notes_slide = True
+        mock_notes_frame = MagicMock()
+        mock_notes_frame.text = ""  # Empty notes
+        mock_slide.notes_slide.notes_text_frame = mock_notes_frame
+        mock_pptx.Presentation.return_value.slides = [mock_slide]
+
+        with patch.dict(sys.modules, {"pptx": mock_pptx}):
+            extractor = TextExtractor()
+            result = extractor._extract_pptx_sync(pptx_file)
+
+            # Should have slide content but no notes
+            assert "Slide content" in result
+            assert "[Notes:" not in result
+
+
+class TestPdfEdgeCases:
+    """Tests for PDF edge cases."""
+
+    def test_extract_pdf_page_with_no_text(self, tmp_path: Path):
+        """Should skip pages with no text."""
+        import sys
+
+        pdf_file = tmp_path / "test.pdf"
+        pdf_file.write_bytes(b"fake pdf content")
+
+        mock_pdfplumber = MagicMock()
+        mock_page1 = MagicMock()
+        mock_page1.extract_text.return_value = None  # No text
+        mock_page2 = MagicMock()
+        mock_page2.extract_text.return_value = "Page 2 text"
+        mock_pdf = MagicMock()
+        mock_pdf.pages = [mock_page1, mock_page2]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=None)
+        mock_pdfplumber.open.return_value = mock_pdf
+
+        with patch.dict(sys.modules, {"pdfplumber": mock_pdfplumber}):
+            extractor = TextExtractor()
+            result = extractor._extract_pdf_sync(pdf_file)
+
+            # Should only have page 2 text
+            assert result == "Page 2 text"
+
 
 class TestAudioTranscription:
     """Tests for audio transcription."""
@@ -188,6 +317,22 @@ class TestAudioTranscription:
 
             assert result == "Transcribed audio"
             mock_whisper.load_model.assert_called_once_with("large")
+
+    def test_transcribe_audio_reuses_loaded_whisper(self, tmp_path: Path):
+        """Should reuse already loaded whisper model."""
+        audio_file = tmp_path / "test.mp3"
+        audio_file.write_bytes(b"fake audio content")
+
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = {"text": "Reused model"}
+
+        extractor = TextExtractor()
+        extractor._whisper = mock_model  # Pre-set the model
+
+        result = extractor._transcribe_audio_sync(audio_file)
+
+        assert result == "Reused model"
+        mock_model.transcribe.assert_called_once_with(str(audio_file), language="de")
 
 
 class TestExtractAsync:

@@ -202,6 +202,26 @@ class TestSpacyBackendValidateLemma:
         assert is_valid is True
         assert correction is None
 
+    @pytest.mark.asyncio
+    async def test_validate_noun_title_case_also_unknown(self):
+        """Should assume valid when noun and title case are both unknown."""
+        mock_nlp = MagicMock()
+
+        def vocab_lookup(word):
+            lexeme = MagicMock()
+            # Both "haus" and "Haus" are unknown
+            lexeme.is_oov = True
+            return lexeme
+
+        mock_nlp.vocab.__getitem__.side_effect = vocab_lookup
+
+        backend = SpacyBackend(nlp=mock_nlp)
+        is_valid, correction = await backend.validate_lemma("haus", "NOUN")
+
+        # Should be valid (assumed) but no correction
+        assert is_valid is True
+        assert correction is None
+
 
 class TestSpacyModuleFunctions:
     """Tests for module-level spaCy functions."""
@@ -425,6 +445,90 @@ class TestDictionaryService:
 
         service = DictionaryService(backends=[mock_backend], use_cache=False)
         await service.close()  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_lookup_cache_hit_found(self):
+        """Should return cached entry on cache hit."""
+        mock_backend = MagicMock()
+        mock_backend.name = "test"
+        mock_backend.lookup = AsyncMock()
+
+        mock_cache = MagicMock()
+        cached_entry = DictionaryEntry(lemma="Cached", source="test")
+        mock_cache.get = AsyncMock(return_value=(True, cached_entry))
+
+        mock_session = MagicMock()
+
+        service = DictionaryService(
+            backends=[mock_backend],
+            cache_manager=mock_cache,
+            use_cache=True,
+        )
+        result = await service.lookup("Test", session=mock_session)
+
+        assert result is not None
+        assert result.lemma == "Cached"
+        mock_backend.lookup.assert_not_called()  # Backend not called on cache hit
+
+    @pytest.mark.asyncio
+    async def test_lookup_cache_hit_not_found(self):
+        """Should skip backend on cached 'not found' result."""
+        backend1 = MagicMock()
+        backend1.name = "backend1"
+        backend1.lookup = AsyncMock()
+
+        backend2 = MagicMock()
+        backend2.name = "backend2"
+        backend2.lookup = AsyncMock(return_value=DictionaryEntry(lemma="Test", source="backend2"))
+
+        mock_cache = MagicMock()
+        # First backend: cache says "not found"
+        # Second backend: cache miss
+        mock_cache.get = AsyncMock(
+            side_effect=[
+                (True, None),  # backend1 cached as not found
+                (False, None),  # backend2 cache miss
+            ]
+        )
+        mock_cache.set = AsyncMock()
+
+        mock_session = MagicMock()
+
+        service = DictionaryService(
+            backends=[backend1, backend2],
+            cache_manager=mock_cache,
+            use_cache=True,
+        )
+        result = await service.lookup("Test", session=mock_session)
+
+        assert result is not None
+        assert result.source == "backend2"
+        backend1.lookup.assert_not_called()  # Skipped due to cached "not found"
+        backend2.lookup.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_lookup_cache_miss_sets_cache(self):
+        """Should cache result on cache miss."""
+        mock_backend = MagicMock()
+        mock_backend.name = "test"
+        entry = DictionaryEntry(lemma="Test", source="test")
+        mock_backend.lookup = AsyncMock(return_value=entry)
+
+        mock_cache = MagicMock()
+        mock_cache.get = AsyncMock(return_value=(False, None))  # Cache miss
+        mock_cache.set = AsyncMock()
+
+        mock_session = MagicMock()
+
+        service = DictionaryService(
+            backends=[mock_backend],
+            cache_manager=mock_cache,
+            use_cache=True,
+        )
+        result = await service.lookup("Test", session=mock_session)
+
+        assert result is not None
+        mock_cache.set.assert_called_once_with(mock_session, "Test", None, "test", entry)
 
 
 class TestCacheSerialization:

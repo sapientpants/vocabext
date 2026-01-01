@@ -27,7 +27,7 @@ class DictionaryBackend(ABC):
     @abstractmethod
     def name(self) -> str:
         """Return the name of this dictionary backend."""
-        ...
+        ...  # pragma: no cover
 
     @abstractmethod
     async def lookup(self, word: str, pos: str | None = None) -> DictionaryEntry | None:
@@ -41,7 +41,7 @@ class DictionaryBackend(ABC):
         Returns:
             DictionaryEntry with available data, or None if word not found
         """
-        ...
+        ...  # pragma: no cover
 
     @abstractmethod
     async def validate_lemma(self, lemma: str, pos: str | None = None) -> tuple[bool, str | None]:
@@ -57,4 +57,4 @@ class DictionaryBackend(ABC):
             - is_valid: True if the lemma exists
             - corrected_lemma: The correct form if different, or None
         """
-        ...
+        ...  # pragma: no cover

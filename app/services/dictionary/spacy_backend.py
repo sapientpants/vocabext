@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 _nlp: Language | None = None
 
 
-def _get_nlp() -> Language:
+def _get_nlp() -> Language:  # pragma: no cover
     """Get or load the spaCy German model."""
     global _nlp
     if _nlp is None:

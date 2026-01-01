@@ -8,6 +8,8 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+# Import models to register them with Base.metadata
+import app.models  # noqa: F401
 from app.database import Base
 
 

@@ -122,6 +122,34 @@ class TestAnkiServiceEnsureNoteType:
         calls = service._invoke.call_args_list
         assert not any(call[0][0] == "createModel" for call in calls)
 
+    @pytest.mark.asyncio
+    async def test_removes_context_field_when_exists(self):
+        """Should remove Context field if it exists in the model."""
+        service = AnkiService(url="http://test:8765", note_type="Test Note")
+        # First call: modelNames returns our model
+        # Second call: modelFieldNames returns fields including Context
+        # Third call: modelFieldRemove
+        service._invoke = AsyncMock(
+            side_effect=[["Test Note"], ["Front", "Back", "Grammar", "Context"], None]
+        )
+
+        await service.ensure_note_type()
+
+        # Should have called modelFieldRemove
+        calls = service._invoke.call_args_list
+        assert any(call[0][0] == "modelFieldRemove" for call in calls)
+
+    @pytest.mark.asyncio
+    async def test_handles_context_field_check_error(self):
+        """Should handle error when checking Context field."""
+        service = AnkiService(url="http://test:8765", note_type="Test Note")
+        # First call: modelNames returns our model
+        # Second call: modelFieldNames raises
+        service._invoke = AsyncMock(side_effect=[["Test Note"], Exception("API error")])
+
+        # Should not raise
+        await service.ensure_note_type()
+
 
 class TestAnkiServiceEnsureDeck:
     """Tests for AnkiService.ensure_deck method."""
@@ -350,3 +378,69 @@ class TestAnkiServiceGetSyncStats:
 
         assert result["available"] is False
         assert "error" in result
+
+
+class TestAnkiServiceSyncWordExisting:
+    """Tests for sync_word finding existing notes."""
+
+    @pytest.mark.asyncio
+    async def test_sync_finds_and_updates_existing_by_front(self):
+        """Should find existing note by Front field and update it."""
+        service = AnkiService(url="http://test:8765")
+        service.note_exists = AsyncMock(return_value=False)  # No stored ID
+        service.find_existing_note = AsyncMock(return_value=54321)  # Found by Front
+        service.update_note = AsyncMock()
+
+        word = Word(lemma="Arbeit", pos="NOUN")  # No anki_note_id
+        result = await service.sync_word(word)
+
+        assert result == 54321
+        assert word.anki_note_id == 54321
+        service.update_note.assert_called_once_with(word)
+
+
+class TestAnkiServiceGetAllNoteIds:
+    """Tests for get_all_note_ids method."""
+
+    @pytest.mark.asyncio
+    async def test_get_all_note_ids(self):
+        """Should return all note IDs for deck and note type."""
+        service = AnkiService(
+            url="http://test:8765",
+            deck="Test Deck",
+            note_type="Test Note",
+        )
+        service._invoke = AsyncMock(return_value=[123, 456, 789])
+
+        result = await service.get_all_note_ids()
+
+        assert result == [123, 456, 789]
+        service._invoke.assert_called_once()
+        call_args = service._invoke.call_args
+        assert call_args[0][0] == "findNotes"
+        assert "deck:Test Deck" in call_args[1]["query"]
+        assert "note:Test Note" in call_args[1]["query"]
+
+
+class TestAnkiServiceDeleteNotes:
+    """Tests for delete_notes method."""
+
+    @pytest.mark.asyncio
+    async def test_delete_notes(self):
+        """Should delete specified notes."""
+        service = AnkiService(url="http://test:8765")
+        service._invoke = AsyncMock()
+
+        await service.delete_notes([123, 456])
+
+        service._invoke.assert_called_once_with("deleteNotes", notes=[123, 456])
+
+    @pytest.mark.asyncio
+    async def test_delete_notes_empty_list(self):
+        """Should not call API with empty list."""
+        service = AnkiService(url="http://test:8765")
+        service._invoke = AsyncMock()
+
+        await service.delete_notes([])
+
+        service._invoke.assert_not_called()
