@@ -116,28 +116,44 @@ async def _process_file(file_path: Path, skip_enrichment: bool) -> None:
                 with create_progress() as progress:
                     task = progress.add_task("Enriching new words...", total=len(new_tokens))
 
-                    # Create all enrichment tasks
-                    tasks = [asyncio.create_task(_enrich_token(enricher, t)) for t in new_tokens]
+                    # Create all enrichment tasks and track which token each task belongs to
+                    task_to_token: dict[
+                        asyncio.Task[tuple[TokenInfo, EnrichmentResult | None]], TokenInfo
+                    ] = {}
+                    for t in new_tokens:
+                        async_task = asyncio.create_task(_enrich_token(enricher, t))
+                        task_to_token[async_task] = t
 
                     # Process results as they complete (real-time progress)
-                    for coro in asyncio.as_completed(tasks):
-                        try:
-                            token, enrichment = await coro
-                            if enrichment is None:
+                    pending: set[asyncio.Task[tuple[TokenInfo, EnrichmentResult | None]]] = set(
+                        task_to_token.keys()
+                    )
+                    while pending:
+                        done, pending = await asyncio.wait(
+                            pending, return_when=asyncio.FIRST_COMPLETED
+                        )
+                        for completed_task in done:
+                            token = task_to_token[completed_task]
+                            try:
+                                _, enrichment = completed_task.result()
+                                if enrichment is None:
+                                    errors += 1
+                                elif hasattr(enrichment, "error") and enrichment.error:
+                                    errors += 1
+                                    logger.warning(
+                                        "Enrichment error for '%s': %s",
+                                        token.lemma,
+                                        enrichment.error,
+                                    )
+                                enrichments.append((token, enrichment))
+                            except Exception as e:
+                                # Unexpected exception - we know the token from our mapping
                                 errors += 1
-                            elif hasattr(enrichment, "error") and enrichment.error:
-                                errors += 1
-                                logger.warning(
-                                    "Enrichment error for '%s': %s", token.lemma, enrichment.error
+                                logger.exception(
+                                    "Unexpected enrichment exception for '%s': %s", token.lemma, e
                                 )
-                            enrichments.append((token, enrichment))
-                        except Exception as e:
-                            # Unexpected exception not caught by _enrich_token
-                            errors += 1
-                            logger.exception("Unexpected enrichment exception: %s", e)
-                            # We don't know which token failed, but we still need to count it
-                            enrichments.append((new_tokens[len(enrichments)], None))
-                        progress.update(task, advance=1)
+                                enrichments.append((token, None))
+                            progress.update(task, advance=1)
             elif new_tokens:
                 # Skip enrichment - just pair tokens with None
                 enrichments = [(t, None) for t in new_tokens]

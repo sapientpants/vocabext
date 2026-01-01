@@ -125,11 +125,9 @@ class TestGetSession:
 
         assert isinstance(session, AsyncSession)
 
-        # Cleanup
-        try:
+        # Cleanup: exhaust the generator (it should raise StopAsyncIteration)
+        with pytest.raises(StopAsyncIteration):
             await gen.__anext__()
-        except StopAsyncIteration:
-            pass
         await test_engine.dispose()
 
 
