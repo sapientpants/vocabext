@@ -66,6 +66,8 @@ async def chat_completion(
     structured output with JSON schema validation. This is distinct from the
     older Chat Completions API.
 
+    See: https://platform.openai.com/docs/api-reference/responses/create
+
     Uses global semaphore to limit concurrent requests to 100.
     Retries transient errors with exponential backoff.
 

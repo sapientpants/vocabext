@@ -351,7 +351,7 @@ async def _validate_words(search: str, pos: str, limit: int, dry_run: bool = Fal
             except Exception as e:
                 return (word, e)
 
-        # Fire all tasks - semaphore in validate_and_enrich limits concurrency
+        # Fire all tasks - semaphore in llm.chat_completion limits concurrency
         tasks = [asyncio.create_task(enrich_word(word)) for word in words]
 
         def status_description() -> str:
