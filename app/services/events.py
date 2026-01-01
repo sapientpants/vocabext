@@ -186,7 +186,11 @@ async def revert_to_event(
         word.ipa = event.ipa
         word.lemma_source = event.lemma_source
         word.dictionary_url = event.dictionary_url
-        # Don't restore anki_note_id - that's managed by sync
+        # NOTE: anki_note_id is intentionally NOT restored here.
+        # Anki sync state is managed by the sync command, which will:
+        # - Detect the word needs sync (needs_sync property)
+        # - Re-link to existing note via findNotes, or create new note
+        # This prevents duplicate Anki notes when restoring deleted words.
 
         logger.info("Reverted word %d (%s) to event %d", word.id, word.lemma, event.id)
 

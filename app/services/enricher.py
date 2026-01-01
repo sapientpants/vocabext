@@ -117,6 +117,7 @@ class EnrichmentResult(BaseModel):
     ipa: str | None = None  # Pronunciation
     lemma_source: str | None = None  # "spacy", "dwds", etc.
     dictionary_url: str | None = None  # Link to entry
+    dictionary_error: str | None = None  # Error from dictionary lookup (if any)
 
 
 class Enricher:
@@ -411,6 +412,7 @@ Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-,
 
             except Exception as e:
                 logger.warning(f"Dictionary validation failed for '{lemma}': {e}")
+                result.dictionary_error = f"Validation failed: {e}"
                 validated_lemma = lemma
 
         # Step 2: Get additional dictionary data (frequency, IPA, URL)
@@ -440,6 +442,7 @@ Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-,
 
             except Exception as e:
                 logger.warning(f"Dictionary lookup failed for '{validated_lemma}': {e}")
+                result.dictionary_error = f"Lookup failed: {e}"
                 # Continue with LLM-only enrichment
 
         # Step 3: Use LLM for remaining data

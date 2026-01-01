@@ -84,8 +84,20 @@ class SpacyBackend(DictionaryBackend):
         """
         Validate that a lemma exists in spaCy vocabulary.
 
+        Design Decision: Unknown words return (True, None) rather than (False, None).
+        This is intentional because spaCy's vocabulary doesn't contain all valid German words:
+        - Proper nouns and named entities
+        - Compound words (very common in German)
+        - Technical terms and neologisms
+        - Regional variants
+
+        The LLM provides additional validation for words not in spaCy's vocabulary.
+        If stricter validation is needed, configure a different dictionary backend.
+
         Returns:
-            Tuple of (is_valid, corrected_lemma)
+            Tuple of (is_valid, corrected_lemma) where:
+            - is_valid: True if word is in vocabulary OR unknown (assumed valid)
+            - corrected_lemma: Corrected form if case was wrong, None otherwise
         """
         # Check exact match
         if self._is_known(lemma):
@@ -102,7 +114,6 @@ class SpacyBackend(DictionaryBackend):
             if title != lemma and self._is_known(title):
                 return True, title
 
-        # Unknown word - still return True to avoid rejecting valid German words
-        # that aren't in spaCy's vocabulary (proper nouns, compounds, etc.)
+        # Unknown word - assume valid (see docstring for rationale)
         logger.debug(f"Word '{lemma}' not in spaCy vocabulary, assuming valid")
         return True, None

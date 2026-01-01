@@ -62,6 +62,10 @@ async def chat_completion(
     """
     Make a request to OpenAI Responses API with structured JSON output.
 
+    Uses the OpenAI Responses API (client.responses.create) which provides
+    structured output with JSON schema validation. This is distinct from the
+    older Chat Completions API.
+
     Uses global semaphore to limit concurrent requests to 100.
     Retries transient errors with exponential backoff.
 
@@ -87,6 +91,8 @@ async def chat_completion(
     for attempt in range(_MAX_RETRIES + 1):
         try:
             async with get_semaphore():
+                # OpenAI Responses API - uses 'input' (not 'messages') and 'text.format'
+                # for structured JSON output. Response uses 'output_text' property.
                 response = await client.responses.create(
                     model=model,
                     input=[{"role": "user", "content": prompt}],
@@ -109,12 +115,15 @@ async def chat_completion(
         except Exception as e:
             last_error = e
             if attempt < _MAX_RETRIES and _is_retryable(e):
-                # Exponential backoff with jitter
-                delay = min(_BASE_DELAY * (2**attempt) + random.uniform(0, 1), _MAX_DELAY)  # nosec B311
+                # Exponential backoff with non-cryptographic jitter for timing only
+                jitter = random.uniform(0, 1)  # nosec B311 - safe for timing jitter
+                delay = min(_BASE_DELAY * (2**attempt) + jitter, _MAX_DELAY)
                 logger.debug(f"Retry {attempt + 1}/{_MAX_RETRIES} after {delay:.1f}s: {e}")
                 await asyncio.sleep(delay)
             else:
                 raise
 
-    # Should not reach here, but satisfy type checker
-    raise last_error  # type: ignore[misc]
+    # Should not reach here, but satisfy type checker and static analysis
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("chat_completion failed without capturing an exception")

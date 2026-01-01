@@ -164,7 +164,19 @@ class WordVersion(Base):
 
 
 class WordEvent(Base):
-    """Immutable event log for word operations (event sourcing)."""
+    """
+    Immutable event log for word operations (event sourcing).
+
+    Events are retained indefinitely to support:
+    - Full audit trail of vocabulary changes
+    - Restoring deleted words via revert_to_event()
+    - Debugging and analytics
+
+    Retention Policy:
+    - Events are never automatically deleted
+    - Manual cleanup can be done via SQL if storage becomes a concern
+    - Example: DELETE FROM word_events WHERE event_at < datetime('now', '-1 year')
+    """
 
     __tablename__ = "word_events"
     __table_args__ = (
@@ -173,7 +185,9 @@ class WordEvent(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    word_id: Mapped[int] = mapped_column()  # No FK - word may be deleted (index in __table_args__)
+    # No FK constraint - word may be deleted but events are retained for audit trail
+    # Index is defined in __table_args__ with explicit name
+    word_id: Mapped[int] = mapped_column()
     event_type: Mapped[str] = mapped_column(Text)  # CREATED, MODIFIED, DELETED, RESTORED
     event_at: Mapped[datetime] = mapped_column(default=_utc_now)
 

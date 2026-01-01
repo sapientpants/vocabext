@@ -342,8 +342,10 @@ async def _validate_words(search: str, pos: str, limit: int, dry_run: bool = Fal
         async def enrich_word(word: Word) -> tuple[Word, EnrichmentResult | Exception]:
             """Enrich a single word, return (word, result) tuple."""
             try:
-                # Use dictionary-based enrichment for more stable lemma validation
-                # Note: Don't pass session here - concurrent tasks would conflict on cache writes
+                # Use dictionary-based enrichment for more stable lemma validation.
+                # Note: session is not passed to avoid concurrent cache write conflicts.
+                # The spaCy vocabulary is used for validation (in-memory, no DB needed).
+                # Dictionary cache is populated on single-word operations (add, edit).
                 enrichment = await enricher.enrich_with_dictionary(word.lemma, word.pos, context="")
                 return (word, enrichment)
             except Exception as e:
