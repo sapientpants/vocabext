@@ -1,6 +1,6 @@
 # LLM Pipeline Documentation
 
-This document provides Mermaid sequence diagrams for all processing pipelines in the vocabext application, clearly distinguishing between **local processing** (spaCy, dictionary) and **LLM API calls** (OpenAI).
+This document provides Mermaid sequence diagrams for all processing pipelines in the vocabext application, distinguishing between **local processing** (spaCy) and **LLM API calls** (OpenAI).
 
 ## Overview
 
@@ -44,21 +44,17 @@ sequenceDiagram
 
     Input->>spaCy: Word + optional context
 
-    rect rgb(230, 255, 230)
-        Note over spaCy: LOCAL - POS Detection & Lemma Normalization
-        spaCy->>spaCy: Analyze word with nlp()
-        spaCy->>spaCy: Determine POS (NOUN, VERB, ADJ, etc.)
-        spaCy->>spaCy: Normalize lemma based on POS
-        Note over spaCy: NOUN: capitalize, strip diminutive<br/>VERB: convert participle to infinitive<br/>ADJ: convert to base form
-        spaCy-->>Enricher: TokenInfo(pos, lemma, context)
-    end
+    Note over spaCy: LOCAL - POS Detection & Lemma Normalization
+    spaCy->>spaCy: Analyze word with nlp()
+    spaCy->>spaCy: Determine POS (NOUN, VERB, ADJ, etc.)
+    spaCy->>spaCy: Normalize lemma based on POS
+    Note over spaCy: NOUN: capitalize, strip diminutive<br/>VERB: convert participle to infinitive<br/>ADJ: convert to base form
+    spaCy-->>Enricher: TokenInfo(pos, lemma, context)
 
-    rect rgb(255, 240, 230)
-        Note over Enricher,API: SINGLE API CALL - Unified Enrichment
-        Enricher->>API: Prompt + UNIFIED_SCHEMA
-        Note over API: Returns ALL fields in one call:<br/>translations, gender, plural,<br/>preterite, past_participle, auxiliary<br/>(null for non-applicable fields)
-        API-->>Enricher: EnrichmentResult
-    end
+    Note over Enricher,API: SINGLE API CALL - Unified Enrichment
+    Enricher->>API: Prompt + UNIFIED_SCHEMA
+    Note over API: Returns ALL fields in one call:<br/>translations, gender, plural,<br/>preterite, past_participle, auxiliary<br/>(null for non-applicable fields)
+    API-->>Enricher: EnrichmentResult
 
     Enricher->>DB: Create Word record
     Note over DB: lemma_source = "spacy"
@@ -85,43 +81,37 @@ sequenceDiagram
 
     User->>CLI: process file document.pdf
 
-    rect rgb(230, 255, 230)
-        Note over CLI,Tokenizer: LOCAL PROCESSING - No API calls
-        CLI->>Extractor: Extract text
-        Note over Extractor: PDF, PPTX, TXT, MD,<br/>Audio (Whisper)
-        Extractor-->>CLI: Raw text
+    Note over CLI,Tokenizer: LOCAL PROCESSING - No API calls
+    CLI->>Extractor: Extract text
+    Note over Extractor: PDF, PPTX, TXT, MD, Audio (Whisper)
+    Extractor-->>CLI: Raw text
 
-        CLI->>Tokenizer: tokenize(text)
-        Tokenizer->>spaCy: nlp(text)
+    CLI->>Tokenizer: tokenize(text)
+    Tokenizer->>spaCy: nlp(text)
+    Note over spaCy: Sentence segmentation, POS tagging, Lemmatization
+    spaCy-->>Tokenizer: Doc with tokens
 
-        Note over spaCy: Sentence segmentation<br/>POS tagging<br/>Lemmatization
-
-        spaCy-->>Tokenizer: Doc with tokens
-
-        loop For each token
-            Tokenizer->>Tokenizer: Filter by POS (NOUN, VERB, ADJ, ADV, ADP)
-            Tokenizer->>Tokenizer: Skip non-alphabetic tokens
-            Tokenizer->>Tokenizer: Skip participles, ordinals, stopwords
-            Tokenizer->>Tokenizer: Normalize lemma (diminutives, contractions)
-            Tokenizer->>Tokenizer: Deduplicate by (lemma, pos)
-        end
-
-        Tokenizer-->>CLI: List[TokenInfo]
+    loop For each token
+        Tokenizer->>Tokenizer: Filter by POS (NOUN, VERB, ADJ, ADV, ADP)
+        Tokenizer->>Tokenizer: Skip non-alphabetic tokens
+        Tokenizer->>Tokenizer: Skip participles, ordinals, stopwords
+        Tokenizer->>Tokenizer: Normalize lemma (diminutives, contractions)
+        Tokenizer->>Tokenizer: Deduplicate by (lemma, pos)
     end
+
+    Tokenizer-->>CLI: List[TokenInfo]
 
     CLI->>DB: Check for duplicates
     DB-->>CLI: Existing lemmas
     CLI->>CLI: Filter to new words only
 
-    rect rgb(255, 240, 230)
-        Note over CLI,API: SINGLE API CALL per word
-        par Parallel enrichment (semaphore limited)
-            loop For each new word
-                CLI->>Enricher: enrich(lemma, pos, context)
-                Enricher->>API: Unified schema request
-                API-->>Enricher: EnrichmentResult
-                Enricher-->>CLI: EnrichmentResult
-            end
+    Note over CLI,API: SINGLE API CALL per word
+    par Parallel enrichment (semaphore limited)
+        loop For each new word
+            CLI->>Enricher: enrich(lemma, pos, context)
+            Enricher->>API: Unified schema request
+            API-->>Enricher: EnrichmentResult
+            Enricher-->>CLI: EnrichmentResult
         end
     end
 
@@ -156,26 +146,22 @@ sequenceDiagram
     Validator->>Validator: Check alphabetic only
     Note over Validator: Rejects: "Wort123", "Baden-Württemberg"<br/>Accepts: "Größe", "über", "Hund"
 
-    rect rgb(230, 255, 230)
-        Note over CLI,spaCy: LOCAL - POS Detection (same as document processing)
-        CLI->>Tokenizer: analyze_word("Hund", context)
-        Tokenizer->>spaCy: nlp(context or word)
-        spaCy-->>Tokenizer: Doc with tokens
-        Tokenizer->>Tokenizer: Find matching token
-        Tokenizer->>Tokenizer: Extract POS and normalize lemma
-        Tokenizer-->>CLI: TokenInfo(pos="NOUN", lemma="Hund")
-    end
+    Note over CLI,spaCy: LOCAL - POS Detection (same as document processing)
+    CLI->>Tokenizer: analyze_word("Hund", context)
+    Tokenizer->>spaCy: nlp(context or word)
+    spaCy-->>Tokenizer: Doc with tokens
+    Tokenizer->>Tokenizer: Find matching token
+    Tokenizer->>Tokenizer: Extract POS and normalize lemma
+    Tokenizer-->>CLI: TokenInfo(pos="NOUN", lemma="Hund")
 
     CLI->>DB: Check for duplicate (lemma, pos, gender)
     DB-->>CLI: No duplicate found
 
-    rect rgb(255, 240, 230)
-        Note over CLI,API: SINGLE API CALL - Unified Enrichment
-        CLI->>Enricher: enrich("Hund", "NOUN", context)
-        Enricher->>API: Unified schema request
-        API-->>Enricher: {gender: "der", plural: "Hunde",<br/>translations: ["dog"], ...}
-        Enricher-->>CLI: EnrichmentResult
-    end
+    Note over CLI,API: SINGLE API CALL - Unified Enrichment
+    CLI->>Enricher: enrich("Hund", "NOUN", context)
+    Enricher->>API: Unified schema request
+    API-->>Enricher: {gender: "der", plural: "Hunde", translations: ["dog"], ...}
+    Enricher-->>CLI: EnrichmentResult
 
     CLI->>DB: Create Word record
     Note over DB: lemma_source = "spacy"
@@ -198,35 +184,32 @@ sequenceDiagram
     participant Client as AsyncOpenAI
     participant API as OpenAI API
 
-    rect rgb(255, 240, 230)
-        Note over Caller,API: SINGLE API CALL
+    Note over Caller,API: SINGLE API CALL
 
-        Caller->>llm: chat_completion(prompt, schema, schema_name)
+    Caller->>llm: chat_completion(prompt, schema, schema_name)
 
-        llm->>llm: get_client() [lazy init]
-        llm->>Semaphore: acquire (max 100 concurrent)
+    llm->>llm: get_client() [lazy init]
+    llm->>Semaphore: acquire (max 100 concurrent)
 
-        loop Max 3 retries
-            llm->>Client: responses.create()
+    loop Max 3 retries
+        llm->>Client: responses.create()
 
-            Note over Client,API: Request Structure
-            Client->>API: model: gpt-5-mini<br/>input: [{role: user, content: prompt}]<br/>text.format: json_schema (UNIFIED)
+        Note over Client,API: model: gpt-5-mini, input: prompt, text.format: json_schema
 
-            alt Success
-                API-->>Client: Response with output_text
-                Client-->>llm: response
-                llm->>llm: Parse JSON from output_text
-                llm->>Semaphore: release
-                llm-->>Caller: dict[str, Any]
-            else Retryable Error (429, 5xx, timeout, connection)
-                API-->>Client: Error
-                llm->>llm: Backoff: min(1.0 * 2^attempt + jitter, 30)
-                llm->>llm: await asyncio.sleep(delay)
-            else Non-Retryable Error (4xx except 429)
-                API-->>Client: Error
-                llm->>Semaphore: release
-                llm-->>Caller: Raise LLMError
-            end
+        alt Success
+            API-->>Client: Response with output_text
+            Client-->>llm: response
+            llm->>llm: Parse JSON from output_text
+            llm->>Semaphore: release
+            llm-->>Caller: dict[str, Any]
+        else Retryable Error (429, 5xx, timeout, connection)
+            API-->>Client: Error
+            llm->>llm: Backoff: min(1.0 * 2^attempt + jitter, 30)
+            llm->>llm: await asyncio.sleep(delay)
+        else Non-Retryable Error (4xx except 429)
+            API-->>Client: Error
+            llm->>Semaphore: release
+            llm-->>Caller: Raise LLMError
         end
     end
 ```
@@ -246,24 +229,22 @@ sequenceDiagram
     participant llm as llm.chat_completion()
     participant API as OpenAI API
 
-    rect rgb(255, 240, 230)
-        Note over Caller,API: SINGLE API CALL - Unified Schema
+    Note over Caller,API: SINGLE API CALL - Unified Schema
 
-        Caller->>Enricher: enrich(lemma, pos, context)
+    Caller->>Enricher: enrich(lemma, pos, context)
 
-        Enricher->>Enricher: Build unified prompt
-        Note over Enricher: POS-specific instructions:<br/>NOUN: provide gender, plural<br/>VERB: provide conjugations<br/>OTHER: set noun/verb fields to null
+    Enricher->>Enricher: Build unified prompt
+    Note over Enricher: POS-specific instructions:<br/>NOUN: provide gender, plural<br/>VERB: provide conjugations<br/>OTHER: set noun/verb fields to null
 
-        Enricher->>llm: chat_completion(prompt, UNIFIED_SCHEMA)
-        llm->>API: Structured JSON request
-        API-->>llm: All fields in one response
-        llm-->>Enricher: Parsed dict
+    Enricher->>llm: chat_completion(prompt, UNIFIED_SCHEMA)
+    llm->>API: Structured JSON request
+    API-->>llm: All fields in one response
+    llm-->>Enricher: Parsed dict
 
-        Enricher->>Enricher: Build EnrichmentResult
-        Note over Enricher: Fields populated based on POS:<br/>- lemma, translations (always)<br/>- gender, plural (nouns)<br/>- preterite, past_participle, aux (verbs)
+    Enricher->>Enricher: Build EnrichmentResult
+    Note over Enricher: Fields populated based on POS:<br/>- lemma, translations (always)<br/>- gender, plural (nouns)<br/>- preterite, past_participle, aux (verbs)
 
-        Enricher-->>Caller: EnrichmentResult
-    end
+    Enricher-->>Caller: EnrichmentResult
 ```
 
 ### Unified Schema Structure
@@ -304,12 +285,10 @@ sequenceDiagram
     DB-->>CLI: List[Word]
 
     loop For each word (parallel with semaphore)
-        rect rgb(255, 240, 230)
-            Note over CLI,API: SINGLE API CALL per word
-            CLI->>Enricher: enrich(word.lemma, word.pos, "")
-            Enricher->>API: Unified schema request
-            API-->>Enricher: EnrichmentResult
-        end
+        Note over CLI,API: SINGLE API CALL per word
+        CLI->>Enricher: enrich(word.lemma, word.pos, "")
+        Enricher->>API: Unified schema request
+        API-->>Enricher: EnrichmentResult
 
         Enricher-->>CLI: EnrichmentResult
 
@@ -326,7 +305,7 @@ sequenceDiagram
 
 ## Summary: What Goes Where
 
-### Local Processing (spaCy) - FREE, FAST, OFFLINE
+### Local Processing (spaCy)
 
 ```mermaid
 flowchart LR
@@ -340,11 +319,9 @@ flowchart LR
         G --> C
         G --> D
     end
-
-    style LOCAL fill:#e6ffe6
 ```
 
-### LLM Processing (OpenAI) - ONE CALL PER WORD
+### LLM Processing (OpenAI)
 
 ```mermaid
 flowchart LR
@@ -355,8 +332,6 @@ flowchart LR
         B --> E[Plural if NOUN]
         B --> F[Conjugations if VERB]
     end
-
-    style LLM fill:#fff0e6
 ```
 
 ---
@@ -372,10 +347,6 @@ flowchart TD
     B -->|No| D{Alphabetic only?}
     D -->|No| E[Reject]
     D -->|Yes| F[Process]
-
-    style C fill:#ffcccc
-    style E fill:#ffcccc
-    style F fill:#ccffcc
 ```
 
 **Accepted**: `Hund`, `Größe`, `über`, `Straße`
