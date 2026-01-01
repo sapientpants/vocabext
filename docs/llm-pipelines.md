@@ -216,9 +216,9 @@ sequenceDiagram
 
 ---
 
-## Pipeline 4: Word Enrichment (Unified Schema)
+## Pipeline 4: Word Enrichment (POS-Specific Schemas)
 
-Single LLM call that returns all grammatical information regardless of POS.
+Single LLM call per word using POS-specific schemas for tighter validation.
 
 Located in `app/services/enricher.py`.
 
@@ -229,39 +229,61 @@ sequenceDiagram
     participant llm as llm.chat_completion()
     participant API as OpenAI API
 
-    Note over Caller,API: SINGLE API CALL - Unified Schema
+    Note over Caller,API: SINGLE API CALL per word
 
     Caller->>Enricher: enrich(lemma, pos, context)
 
-    Enricher->>Enricher: Build unified prompt
-    Note over Enricher: POS-specific instructions:<br/>NOUN: provide gender, plural<br/>VERB: provide conjugations<br/>OTHER: set noun/verb fields to null
+    Enricher->>Enricher: Select schema for POS
+    Note over Enricher: NOUN → NOUN_SCHEMA<br/>VERB → VERB_SCHEMA<br/>OTHER → WORD_SCHEMA
 
-    Enricher->>llm: chat_completion(prompt, UNIFIED_SCHEMA)
+    Enricher->>llm: chat_completion(prompt, POS_SCHEMA)
     llm->>API: Structured JSON request
-    API-->>llm: All fields in one response
+    API-->>llm: POS-specific fields
     llm-->>Enricher: Parsed dict
 
     Enricher->>Enricher: Build EnrichmentResult
-    Note over Enricher: Fields populated based on POS:<br/>- lemma, translations (always)<br/>- gender, plural (nouns)<br/>- preterite, past_participle, aux (verbs)
+    Note over Enricher: Fields populated based on POS:<br/>- lemma, translations (always)<br/>- gender, plural (nouns only)<br/>- preterite, past_participle, aux (verbs only)
 
     Enricher-->>Caller: EnrichmentResult
 ```
 
-### Unified Schema Structure
+### POS-Specific Schemas
 
+**NOUN_SCHEMA** - For nouns:
 ```json
 {
-  "type": "object",
   "properties": {
     "lemma": {"type": "string"},
-    "translations": {"type": "array", "items": {"type": "string"}},
-    "gender": {"type": ["string", "null"], "enum": ["der", "die", "das", null]},
-    "plural": {"type": ["string", "null"]},
-    "preterite": {"type": ["string", "null"]},
-    "past_participle": {"type": ["string", "null"]},
-    "auxiliary": {"type": ["string", "null"], "enum": ["haben", "sein", null]}
+    "gender": {"type": "string", "enum": ["der", "die", "das"]},
+    "plural": {"type": "string"},
+    "translations": {"type": "array", "items": {"type": "string"}}
   },
-  "required": ["lemma", "translations", "gender", "plural", "preterite", "past_participle", "auxiliary"]
+  "required": ["lemma", "gender", "plural", "translations"]
+}
+```
+
+**VERB_SCHEMA** - For verbs:
+```json
+{
+  "properties": {
+    "lemma": {"type": "string"},
+    "preterite": {"type": "string"},
+    "past_participle": {"type": "string"},
+    "auxiliary": {"type": "string", "enum": ["haben", "sein"]},
+    "translations": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["lemma", "preterite", "past_participle", "auxiliary", "translations"]
+}
+```
+
+**WORD_SCHEMA** - For adjectives, adverbs, prepositions:
+```json
+{
+  "properties": {
+    "lemma": {"type": "string"},
+    "translations": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["lemma", "translations"]
 }
 ```
 
@@ -269,7 +291,7 @@ sequenceDiagram
 
 ## Vocab Validate Command
 
-Re-enriches existing words using the unified pipeline.
+Re-enriches existing words using POS-specific schemas.
 
 ```mermaid
 sequenceDiagram
@@ -287,7 +309,7 @@ sequenceDiagram
     loop For each word (parallel with semaphore)
         Note over CLI,API: SINGLE API CALL per word
         CLI->>Enricher: enrich(word.lemma, word.pos, "")
-        Enricher->>API: Unified schema request
+        Enricher->>API: POS-specific schema request
         API-->>Enricher: EnrichmentResult
 
         Enricher-->>CLI: EnrichmentResult

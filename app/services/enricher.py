@@ -114,56 +114,6 @@ POS_DETECTION_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
-# Unified schema for single-call enrichment (all POS types)
-UNIFIED_ENRICHMENT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "lemma": {
-            "type": "string",
-            "description": "Correct base/dictionary form of the word",
-        },
-        "translations": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "1-3 English translations, most common first",
-        },
-        # Noun-specific fields
-        "gender": {
-            "type": ["string", "null"],
-            "enum": ["der", "die", "das", None],
-            "description": "Article for nouns (der/die/das), null for non-nouns",
-        },
-        "plural": {
-            "type": ["string", "null"],
-            "description": "Plural form for nouns, null for non-nouns",
-        },
-        # Verb-specific fields
-        "preterite": {
-            "type": ["string", "null"],
-            "description": "3rd person singular preterite for verbs, null for non-verbs",
-        },
-        "past_participle": {
-            "type": ["string", "null"],
-            "description": "Past participle for verbs (without auxiliary), null for non-verbs",
-        },
-        "auxiliary": {
-            "type": ["string", "null"],
-            "enum": ["haben", "sein", None],
-            "description": "Auxiliary verb (haben/sein) for verbs, null for non-verbs",
-        },
-    },
-    "required": [
-        "lemma",
-        "translations",
-        "gender",
-        "plural",
-        "preterite",
-        "past_participle",
-        "auxiliary",
-    ],
-    "additionalProperties": False,
-}
-
 
 class EnrichmentResult(BaseModel):
     """Result of LLM enrichment for a word."""
@@ -209,77 +159,36 @@ class Enricher:
             self._dictionary = DictionaryService()
         return self._dictionary
 
-    def _build_unified_prompt(self, lemma: str, pos: str, context: str) -> str:
-        """Build unified prompt for single-call LLM enrichment."""
-        pos_instructions = {
-            "NOUN": """For this NOUN:
-- Provide the grammatical gender (der/die/das)
-- Provide the plural form (without article)
-- Set verb fields (preterite, past_participle, auxiliary) to null""",
-            "VERB": """For this VERB:
-- Set noun fields (gender, plural) to null
-- Provide preterite (3rd person singular, e.g., "ging" for gehen)
-- Provide past participle (without auxiliary, e.g., "gegangen")
-- Provide auxiliary (haben or sein - use sein for movement/state-change verbs)""",
-        }
-
-        specific_instructions = pos_instructions.get(
-            pos,
-            """For this word:
-- Set all noun fields (gender, plural) to null
-- Set all verb fields (preterite, past_participle, auxiliary) to null""",
-        )
-
-        return f"""Analyze this German word and provide complete grammatical information.
-
-Word: {lemma}
-Part of speech: {pos}
-Context: "{context}"
-
-{specific_instructions}
-
-IMPORTANT:
-- Verify the lemma is the correct base/dictionary form
-- Provide 1-3 English translations, most common first
-- Double-check all forms are spelled correctly
-- Use null for fields that don't apply to this part of speech"""
-
-    def _build_prompt(self, lemma: str, pos: str, context: str) -> str:
-        """Build the prompt for LLM enrichment (legacy, kept for compatibility)."""
+    def _build_prompt(self, lemma: str, pos: str) -> str:
+        """Build the prompt for LLM enrichment based on part of speech."""
         if pos == "NOUN":
-            return f"""Analyze this German noun and provide verified grammatical information.
+            return f"""Analyze this German noun and provide grammatical information.
 
 Word: {lemma}
-Part of speech: Noun
-Context: "{context}"
 
-IMPORTANT: Verify each field is correct according to German grammar rules:
-- Gender must match the noun's actual grammatical gender
-- Plural must follow correct German pluralization patterns (e.g., -e, -en, -er, -s, umlaut changes)
-- Double-check spelling of all forms"""
+Provide:
+- Gender (der/die/das)
+- Plural form
+- 1-3 English translations"""
 
         elif pos == "VERB":
-            return f"""Analyze this German verb and provide verified grammatical information.
+            return f"""Analyze this German verb and provide grammatical information.
 
 Word: {lemma}
-Part of speech: Verb
-Context: "{context}"
 
-IMPORTANT: Verify each field is correct according to German grammar rules:
-- Check if this is a regular or irregular (strong) verb
-- Preterite must use correct vowel changes for strong verbs
-- Past participle must use correct prefix (ge-) and ending (-t or -en)
-- Auxiliary must be correct (sein for movement/state-change verbs, haben for most others)
-- Double-check spelling of all conjugated forms"""
+Provide:
+- Preterite (3rd person singular)
+- Past participle
+- Auxiliary (haben or sein)
+- 1-3 English translations"""
 
         else:  # ADJ, ADV, ADP
-            return f"""Analyze this German word and provide verified information.
+            return f"""Analyze this German word and provide translations.
 
 Word: {lemma}
 Part of speech: {pos}
-Context: "{context}"
 
-IMPORTANT: Verify the lemma is the correct base/dictionary form (not inflected or declined)."""
+Provide 1-3 English translations."""
 
     def _get_schema_for_pos(self, pos: str) -> tuple[dict[str, Any], str]:
         """Get the JSON schema and name for a part of speech."""
@@ -296,24 +205,23 @@ IMPORTANT: Verify the lemma is the correct base/dictionary form (not inflected o
         """Make a request to OpenAI's Chat Completions API with structured output."""
         return await chat_completion(prompt, schema, schema_name, model=self.model)
 
-    async def enrich(self, lemma: str, pos: str, context: str) -> EnrichmentResult:
+    async def enrich(self, lemma: str, pos: str) -> EnrichmentResult:
         """
         Enrich a word with grammatical information via OpenAI API.
 
-        This is the primary enrichment method - uses a single unified LLM call
-        to get all grammatical information regardless of POS.
+        Makes a single LLM call per word using POS-specific schemas for
+        tighter validation and smaller responses.
 
         Returns EnrichmentResult with available fields populated.
 
         Uses a semaphore to limit concurrent LLM requests,
         balancing throughput with API rate limits.
         """
-        prompt = self._build_unified_prompt(lemma, pos, context)
+        prompt = self._build_prompt(lemma, pos)
+        schema, schema_name = self._get_schema_for_pos(pos)
 
         try:
-            data = await self._call_chat_api(
-                prompt, UNIFIED_ENRICHMENT_SCHEMA, "unified_enrichment"
-            )
+            data = await self._call_chat_api(prompt, schema, schema_name)
             return self._build_result(data, pos)
 
         except APITimeoutError:
@@ -463,7 +371,7 @@ Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-,
         lemma_to_use = validation.get("corrected_lemma", lemma)
 
         # Get enrichment with validated/corrected lemma
-        result = await self.enrich(lemma_to_use, pos, context)
+        result = await self.enrich(lemma_to_use, pos)
 
         # If lemma was corrected, include the correction in result
         if lemma_to_use != lemma:
@@ -557,7 +465,7 @@ Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-,
         # - Verb conjugations (preterite, past_participle, auxiliary)
         # - Gender (if dictionary didn't provide it)
         try:
-            llm_result = await self.enrich(result.lemma or lemma, pos, context)
+            llm_result = await self.enrich(result.lemma or lemma, pos)
 
             # Merge LLM results (prefer dictionary data where available)
             result.translations = llm_result.translations

@@ -466,6 +466,7 @@ class Tokenizer:
 
         Returns:
             TokenInfo with pos and lemma, or None if word cannot be analyzed
+            (e.g., proper nouns are rejected)
         """
         nlp = self._load_model()
 
@@ -482,10 +483,17 @@ class Tokenizer:
         # Find the token matching our word
         word_lower = word.lower()
         best_match: TokenInfo | None = None
+        is_proper_noun = False
 
         for token in doc:
             # Match by text (case-insensitive)
             if token.text.lower() == word_lower or token.lemma_.lower() == word_lower:
+                # Reject proper nouns (names, places, etc.)
+                if token.pos_ == "PROPN":
+                    is_proper_noun = True
+                    logger.info(f"Word '{word}' detected as proper noun (PROPN), rejecting")
+                    continue
+
                 # Skip irrelevant POS
                 if token.pos_ not in self.RELEVANT_POS:
                     continue
@@ -523,8 +531,12 @@ class Tokenizer:
                 break  # Found a match
 
         # If no match in context, try analyzing the word alone
-        if best_match is None and context:
+        if best_match is None and context and not is_proper_noun:
             return self.analyze_word(word, "")
+
+        # If detected as proper noun, return None (reject it)
+        if is_proper_noun and best_match is None:
+            return None
 
         # If still no match, default to NOUN (most common for unknown words)
         if best_match is None:

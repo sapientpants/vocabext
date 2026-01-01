@@ -797,3 +797,33 @@ class TestAnalyzeWord:
         assert result.pos == "NOUN"
         # Default to NOUN, which gets capitalized (German nouns are capitalized)
         assert result.lemma == "Wort"
+
+    def test_analyze_rejects_proper_noun(self, mock_spacy):
+        """Should reject proper nouns (PROPN) and return None."""
+        mock_token = self._create_mock_token("Berlin", "Berlin", "PROPN")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token])
+
+        result = tokenizer.analyze_word("Berlin", "")
+
+        assert result is None
+
+    def test_analyze_rejects_proper_noun_with_context(self, mock_spacy):
+        """Should reject proper nouns even when using context."""
+        # Both with and without context return PROPN
+        mock_nlp = MagicMock()
+
+        def mock_call(text):
+            mock_doc = MagicMock()
+            mock_token = self._create_mock_token("Berlin", "Berlin", "PROPN")
+            mock_doc.__iter__ = lambda self: iter([mock_token])
+            return mock_doc
+
+        mock_nlp.side_effect = mock_call
+        mock_spacy.return_value = mock_nlp
+
+        tokenizer = Tokenizer()
+        tokenizer._nlp = mock_nlp
+
+        result = tokenizer.analyze_word("Berlin", "Ich wohne in Berlin.")
+
+        assert result is None

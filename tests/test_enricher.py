@@ -176,17 +176,16 @@ class TestEnricherBuildPrompt:
     def test_noun_prompt(self):
         """Should build noun-specific prompt."""
         enricher = Enricher()
-        prompt = enricher._build_prompt("Hund", "NOUN", "Der Hund bellt.")
+        prompt = enricher._build_prompt("Hund", "NOUN")
         assert "German noun" in prompt
         assert "Hund" in prompt
-        assert "Der Hund bellt." in prompt
         assert "Gender" in prompt
         assert "Plural" in prompt
 
     def test_verb_prompt(self):
         """Should build verb-specific prompt."""
         enricher = Enricher()
-        prompt = enricher._build_prompt("gehen", "VERB", "Ich gehe nach Hause.")
+        prompt = enricher._build_prompt("gehen", "VERB")
         assert "German verb" in prompt
         assert "gehen" in prompt
         assert "Preterite" in prompt
@@ -196,7 +195,7 @@ class TestEnricherBuildPrompt:
     def test_adjective_prompt(self):
         """Should build generic prompt for adjectives."""
         enricher = Enricher()
-        prompt = enricher._build_prompt("schnell", "ADJ", "Das Auto ist schnell.")
+        prompt = enricher._build_prompt("schnell", "ADJ")
         assert "German word" in prompt
         assert "schnell" in prompt
         assert "ADJ" in prompt
@@ -204,7 +203,7 @@ class TestEnricherBuildPrompt:
     def test_adverb_prompt(self):
         """Should build generic prompt for adverbs."""
         enricher = Enricher()
-        prompt = enricher._build_prompt("oft", "ADV", "Ich gehe oft spazieren.")
+        prompt = enricher._build_prompt("oft", "ADV")
         assert "German word" in prompt
         assert "ADV" in prompt
 
@@ -250,7 +249,7 @@ class TestEnricherEnrich:
         }
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.return_value = mock_data
-            result = await enricher.enrich("Hund", "NOUN", "Der Hund bellt.")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert result.lemma == "Hund"  # Article stripped
         assert result.gender == "der"
@@ -271,7 +270,7 @@ class TestEnricherEnrich:
         }
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.return_value = mock_data
-            result = await enricher.enrich("gehen", "VERB", "Ich gehe.")
+            result = await enricher.enrich("gehen", "VERB")
 
         assert result.lemma == "gehen"
         assert result.preterite == "ging"
@@ -289,7 +288,7 @@ class TestEnricherEnrich:
         }
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.return_value = mock_data
-            result = await enricher.enrich("schnell", "ADJ", "Das ist schnell.")
+            result = await enricher.enrich("schnell", "ADJ")
 
         assert result.lemma == "schnell"
         assert result.translations == ["fast", "quick"]
@@ -301,7 +300,7 @@ class TestEnricherEnrich:
         enricher = Enricher()
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = APITimeoutError(request=MagicMock())
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert result.error == "OpenAI request timed out"
 
@@ -313,7 +312,7 @@ class TestEnricherEnrich:
         response.status_code = 401
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = APIStatusError(message="Unauthorized", response=response, body=None)
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert "Invalid OpenAI API key" in result.error
 
@@ -325,7 +324,7 @@ class TestEnricherEnrich:
         response.status_code = 404
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = APIStatusError(message="Not found", response=response, body=None)
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert "not found" in result.error
 
@@ -337,7 +336,7 @@ class TestEnricherEnrich:
         response.status_code = 429
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = APIStatusError(message="Rate limited", response=response, body=None)
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert "rate limit exceeded" in result.error
 
@@ -349,7 +348,7 @@ class TestEnricherEnrich:
         response.status_code = 500
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = APIStatusError(message="Server error", response=response, body=None)
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert "HTTP 500" in result.error
 
@@ -359,7 +358,7 @@ class TestEnricherEnrich:
         enricher = Enricher()
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = APIConnectionError(request=MagicMock())
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert "Cannot connect to OpenAI API" in result.error
 
@@ -369,7 +368,7 @@ class TestEnricherEnrich:
         enricher = Enricher()
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = json.JSONDecodeError("Invalid", "doc", 0)
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert "Invalid JSON response" in result.error
 
@@ -379,7 +378,7 @@ class TestEnricherEnrich:
         enricher = Enricher()
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = RuntimeError("Something went wrong")
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert "Enrichment error" in result.error
 
@@ -615,7 +614,7 @@ class TestEnricherValidateAndEnrich:
 
         assert result.lemma == "Hund"
         assert result.gender == "der"
-        mock_enrich.assert_called_once_with("Hund", "NOUN", "context")
+        mock_enrich.assert_called_once_with("Hund", "NOUN")
 
     @pytest.mark.asyncio
     async def test_validate_and_enrich_with_correction(self):
@@ -632,7 +631,7 @@ class TestEnricherValidateAndEnrich:
                 result = await enricher.validate_and_enrich("Hunde", "NOUN", "context")
 
         assert result.lemma == "Hund"
-        mock_enrich.assert_called_once_with("Hund", "NOUN", "context")
+        mock_enrich.assert_called_once_with("Hund", "NOUN")
 
     @pytest.mark.asyncio
     async def test_validate_and_enrich_validation_error(self):

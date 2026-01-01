@@ -57,7 +57,7 @@ async def _enrich_token(
 ) -> tuple[TokenInfo, EnrichmentResult | None]:
     """Enrich a single token with error handling."""
     try:
-        enrichment = await enricher.enrich(token.lemma, token.pos, token.context_sentence)
+        enrichment = await enricher.enrich(token.lemma, token.pos)
         return token, enrichment
     except Exception as e:
         logger.error("Failed to enrich '%s' (%s): %s", token.lemma, token.pos, e)

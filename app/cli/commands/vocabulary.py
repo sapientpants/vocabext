@@ -350,14 +350,17 @@ async def _add_word(word: str, context: str) -> None:
                 # Use spaCy for POS detection (same pipeline as document processing)
                 token_info = tokenizer.analyze_word(word, context)
                 if token_info is None:
-                    raise ValueError(f"Could not analyze word: {word}")
+                    # analyze_word returns None for proper nouns (names, places, etc.)
+                    raise ValueError(
+                        f"'{word}' appears to be a proper noun (name/place) and cannot be added"
+                    )
 
                 pos = token_info.pos
                 lemma = token_info.lemma
                 progress.update(task, description=f"[dim]Detected: {pos}[/] Enriching...")
 
                 # Single LLM call for enrichment (translations + grammar)
-                enrichment = await enricher.enrich(lemma, pos, token_info.context_sentence)
+                enrichment = await enricher.enrich(lemma, pos)
                 progress.update(task, description=f"[green]Complete: {pos}[/]")
             except Exception as e:
                 progress.update(task, description="[red]Failed[/]")
