@@ -323,7 +323,9 @@ class Tokenizer:
         # Comparative: -er (but not words naturally ending in -er)
         if lower.endswith("er") and len(lower) > 4:
             base = lower[:-2]
-            if len(base) >= 3:
+            # Note: len(base) >= 3 is always True here since len(lower) > 4
+            # implies len(lower) >= 5, so len(base) = len(lower) - 2 >= 3
+            if len(base) >= 3:  # pragma: no branch
                 return self._restore_umlaut(base)
 
         return lower

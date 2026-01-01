@@ -116,25 +116,13 @@ async def _process_file(file_path: Path, skip_enrichment: bool) -> None:
                 with create_progress() as progress:
                     task = progress.add_task("Enriching new words...", total=len(new_tokens))
 
-                    # Run all enrichments in parallel (semaphore in llm.py limits concurrency)
-                    # return_exceptions=True ensures one failure doesn't cancel other tasks
-                    raw_results = await asyncio.gather(
-                        *[_enrich_token(enricher, t) for t in new_tokens],
-                        return_exceptions=True,
-                    )
+                    # Create all enrichment tasks
+                    tasks = [asyncio.create_task(_enrich_token(enricher, t)) for t in new_tokens]
 
-                    # Process results, handling both successful enrichments and exceptions
-                    for i, result in enumerate(raw_results):
-                        if isinstance(result, Exception):
-                            # Unexpected exception not caught by _enrich_token
-                            errors += 1
-                            logger.exception(
-                                "Unexpected enrichment exception for '%s'",
-                                new_tokens[i].lemma,
-                            )
-                            enrichments.append((new_tokens[i], None))
-                        else:
-                            token, enrichment = result
+                    # Process results as they complete (real-time progress)
+                    for coro in asyncio.as_completed(tasks):
+                        try:
+                            token, enrichment = await coro
                             if enrichment is None:
                                 errors += 1
                             elif hasattr(enrichment, "error") and enrichment.error:
@@ -143,6 +131,12 @@ async def _process_file(file_path: Path, skip_enrichment: bool) -> None:
                                     "Enrichment error for '%s': %s", token.lemma, enrichment.error
                                 )
                             enrichments.append((token, enrichment))
+                        except Exception as e:
+                            # Unexpected exception not caught by _enrich_token
+                            errors += 1
+                            logger.exception("Unexpected enrichment exception: %s", e)
+                            # We don't know which token failed, but we still need to count it
+                            enrichments.append((new_tokens[len(enrichments)], None))
                         progress.update(task, advance=1)
             elif new_tokens:
                 # Skip enrichment - just pair tokens with None
