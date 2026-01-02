@@ -108,7 +108,7 @@ sequenceDiagram
     Note over CLI,API: SINGLE API CALL per word
     par Parallel enrichment (semaphore limited)
         loop For each new word
-            CLI->>Enricher: enrich(lemma, pos, context)
+            CLI->>Enricher: enrich(lemma, pos)
             Enricher->>API: Unified schema request
             API-->>Enricher: EnrichmentResult
             Enricher-->>CLI: EnrichmentResult
@@ -158,7 +158,7 @@ sequenceDiagram
     DB-->>CLI: No duplicate found
 
     Note over CLI,API: SINGLE API CALL - Unified Enrichment
-    CLI->>Enricher: enrich("Hund", "NOUN", context)
+    CLI->>Enricher: enrich("Hund", "NOUN")
     Enricher->>API: Unified schema request
     API-->>Enricher: {gender: "der", plural: "Hunde", translations: ["dog"], ...}
     Enricher-->>CLI: EnrichmentResult
@@ -209,7 +209,7 @@ sequenceDiagram
         else Non-Retryable Error (4xx except 429)
             API-->>Client: Error
             llm->>Semaphore: release
-            llm-->>Caller: Raise LLMError
+            llm-->>Caller: Raise APIStatusError
         end
     end
 ```
@@ -231,10 +231,10 @@ sequenceDiagram
 
     Note over Caller,API: SINGLE API CALL per word
 
-    Caller->>Enricher: enrich(lemma, pos, context)
+    Caller->>Enricher: enrich(lemma, pos)
 
     Enricher->>Enricher: Select schema for POS
-    Note over Enricher: NOUN → NOUN_SCHEMA<br/>VERB → VERB_SCHEMA<br/>OTHER → WORD_SCHEMA
+    Note over Enricher: NOUN → NOUN_SCHEMA<br/>VERB → VERB_SCHEMA<br/>ADP → PREPOSITION_SCHEMA<br/>OTHER → WORD_SCHEMA
 
     Enricher->>llm: chat_completion(prompt, POS_SCHEMA)
     llm->>API: Structured JSON request
@@ -276,7 +276,19 @@ sequenceDiagram
 }
 ```
 
-**WORD_SCHEMA** - For adjectives, adverbs, prepositions:
+**PREPOSITION_SCHEMA** - For prepositions (ADP):
+```json
+{
+  "properties": {
+    "lemma": {"type": "string"},
+    "cases": {"type": "array", "items": {"type": "string", "enum": ["akkusativ", "dativ", "genitiv"]}},
+    "translations": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["lemma", "cases", "translations"]
+}
+```
+
+**WORD_SCHEMA** - For adjectives, adverbs:
 ```json
 {
   "properties": {
@@ -308,7 +320,7 @@ sequenceDiagram
 
     loop For each word (parallel with semaphore)
         Note over CLI,API: SINGLE API CALL per word
-        CLI->>Enricher: enrich(word.lemma, word.pos, "")
+        CLI->>Enricher: enrich(word.lemma, word.pos)
         Enricher->>API: POS-specific schema request
         API-->>Enricher: EnrichmentResult
 

@@ -473,7 +473,7 @@ class Tokenizer:
         # Build text for analysis - context helps with POS disambiguation
         if context:
             # Include context for better POS detection
-            text = f"{context}"
+            text = context
         else:
             # Just the word alone
             text = word
@@ -540,11 +540,12 @@ class Tokenizer:
 
         # If still no match, default to NOUN (most common for unknown words)
         if best_match is None:
-            # Capitalize for nouns (German nouns are capitalized)
-            lemma = word.capitalize() if word[0].isupper() or not context else word.lower()
+            # German nouns are capitalized - always capitalize for default NOUN
+            # Note: When we reach here, context is always empty because we recurse
+            # with empty context above when no match is found with context present
             best_match = TokenInfo(
                 surface_form=word,
-                lemma=lemma,
+                lemma=word.capitalize(),
                 pos="NOUN",  # Default assumption
                 context_sentence=context or word,
             )

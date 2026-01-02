@@ -207,6 +207,14 @@ class TestEnricherBuildPrompt:
         assert "German word" in prompt
         assert "ADV" in prompt
 
+    def test_preposition_prompt(self):
+        """Should build preposition-specific prompt."""
+        enricher = Enricher()
+        prompt = enricher._build_prompt("mit", "ADP")
+        assert "preposition" in prompt.lower()
+        assert "mit" in prompt
+        assert "Cases" in prompt
+
 
 class TestEnricherGetSchemaForPos:
     """Tests for Enricher._get_schema_for_pos method."""
@@ -225,10 +233,19 @@ class TestEnricherGetSchemaForPos:
         assert schema is VERB_SCHEMA
         assert name == "verb_enrichment"
 
+    def test_preposition_schema(self):
+        """Should return PREPOSITION_SCHEMA for prepositions."""
+        from app.services.enricher import PREPOSITION_SCHEMA
+
+        enricher = Enricher()
+        schema, name = enricher._get_schema_for_pos("ADP")
+        assert schema is PREPOSITION_SCHEMA
+        assert name == "preposition_enrichment"
+
     def test_other_schema(self):
         """Should return WORD_SCHEMA for other POS."""
         enricher = Enricher()
-        for pos in ["ADJ", "ADV", "ADP"]:
+        for pos in ["ADJ", "ADV"]:
             schema, name = enricher._get_schema_for_pos(pos)
             assert schema is WORD_SCHEMA
             assert name == "word_enrichment"
@@ -420,6 +437,18 @@ class TestEnricherBuildResult:
         assert result.preterite == "lief"
         assert result.past_participle == "gelaufen"
         assert result.auxiliary == "sein"
+
+    def test_build_result_preposition_fields(self):
+        """Should set preposition-specific fields."""
+        enricher = Enricher()
+        data = {
+            "lemma": "mit",
+            "cases": ["dativ"],
+            "translations": ["with"],
+        }
+        result = enricher._build_result(data, "ADP")
+        assert result.cases == ["dativ"]
+        assert result.translations == ["with"]
 
     def test_build_result_no_lemma(self):
         """Should handle missing lemma."""

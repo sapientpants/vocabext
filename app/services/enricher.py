@@ -80,6 +80,25 @@ WORD_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+PREPOSITION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "lemma": {"type": "string", "description": "Correct preposition form"},
+        "cases": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["akkusativ", "dativ", "genitiv"]},
+            "description": "Grammatical cases this preposition governs",
+        },
+        "translations": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "1-3 English translations",
+        },
+    },
+    "required": ["lemma", "cases", "translations"],
+    "additionalProperties": False,
+}
+
 VALIDATION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -124,6 +143,7 @@ class EnrichmentResult(BaseModel):
     preterite: str | None = None
     past_participle: str | None = None
     auxiliary: str | None = None  # haben/sein
+    cases: list[str] = Field(default_factory=list)  # akkusativ/dativ/genitiv for prepositions
     translations: list[str] = Field(default_factory=list)
     error: str | None = None  # Error message if enrichment failed
 
@@ -182,7 +202,16 @@ Provide:
 - Auxiliary (haben or sein)
 - 1-3 English translations"""
 
-        else:  # ADJ, ADV, ADP
+        elif pos == "ADP":
+            return f"""Analyze this German preposition and provide grammatical information.
+
+Word: {lemma}
+
+Provide:
+- Cases: which grammatical cases this preposition governs (akkusativ, dativ, and/or genitiv)
+- 1-3 English translations"""
+
+        else:  # ADJ, ADV
             return f"""Analyze this German word and provide translations.
 
 Word: {lemma}
@@ -196,6 +225,8 @@ Provide 1-3 English translations."""
             return NOUN_SCHEMA, "noun_enrichment"
         elif pos == "VERB":
             return VERB_SCHEMA, "verb_enrichment"
+        elif pos == "ADP":
+            return PREPOSITION_SCHEMA, "preposition_enrichment"
         else:
             return WORD_SCHEMA, "word_enrichment"
 
@@ -270,6 +301,8 @@ Provide 1-3 English translations."""
             result.preterite = data.get("preterite")
             result.past_participle = data.get("past_participle")
             result.auxiliary = data.get("auxiliary")
+        elif pos == "ADP":
+            result.cases = data.get("cases", [])
 
         return result
 
