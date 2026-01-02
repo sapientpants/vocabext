@@ -51,9 +51,9 @@ sequenceDiagram
     Note over spaCy: NOUN: capitalize, strip diminutive<br/>VERB: convert participle to infinitive<br/>ADJ: convert to base form
     spaCy-->>Enricher: TokenInfo(pos, lemma, context)
 
-    Note over Enricher,API: SINGLE API CALL - Unified Enrichment
-    Enricher->>API: Prompt + UNIFIED_SCHEMA
-    Note over API: Returns ALL fields in one call:<br/>translations, gender, plural,<br/>preterite, past_participle, auxiliary<br/>(null for non-applicable fields)
+    Note over Enricher,API: SINGLE API CALL - POS-Specific Enrichment
+    Enricher->>API: Prompt + POS-specific Pydantic schema
+    Note over API: Returns fields for this POS:<br/>NOUN: gender, plural<br/>VERB: preterite, past_participle, aux<br/>ADP: cases
     API-->>Enricher: EnrichmentResult
 
     Enricher->>DB: Create Word record
@@ -234,9 +234,9 @@ sequenceDiagram
     Caller->>Enricher: enrich(lemma, pos)
 
     Enricher->>Enricher: Select schema for POS
-    Note over Enricher: NOUN → NOUN_SCHEMA<br/>VERB → VERB_SCHEMA<br/>ADP → PREPOSITION_SCHEMA<br/>OTHER → WORD_SCHEMA
+    Note over Enricher: NOUN → NounResponse<br/>VERB → VerbResponse<br/>ADP → PrepositionResponse<br/>OTHER → WordResponse
 
-    Enricher->>llm: chat_completion(prompt, POS_SCHEMA)
+    Enricher->>llm: chat_completion(prompt, model.model_json_schema())
     llm->>API: Structured JSON request
     API-->>llm: POS-specific fields
     llm-->>Enricher: Parsed dict
@@ -247,56 +247,47 @@ sequenceDiagram
     Enricher-->>Caller: EnrichmentResult
 ```
 
-### POS-Specific Schemas
+### POS-Specific Pydantic Models
 
-**NOUN_SCHEMA** - For nouns:
-```json
-{
-  "properties": {
-    "lemma": {"type": "string"},
-    "gender": {"type": "string", "enum": ["der", "die", "das"]},
-    "plural": {"type": "string"},
-    "translations": {"type": "array", "items": {"type": "string"}}
-  },
-  "required": ["lemma", "gender", "plural", "translations"]
-}
+Schemas are defined as Pydantic models with `ConfigDict(extra="forbid")` for strict validation.
+JSON schemas are generated using `model.model_json_schema()`.
+
+**NounResponse** - For nouns:
+```python
+class NounResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    lemma: str
+    gender: Literal["der", "die", "das"]
+    plural: str
+    translations: list[str]
 ```
 
-**VERB_SCHEMA** - For verbs:
-```json
-{
-  "properties": {
-    "lemma": {"type": "string"},
-    "preterite": {"type": "string"},
-    "past_participle": {"type": "string"},
-    "auxiliary": {"type": "string", "enum": ["haben", "sein"]},
-    "translations": {"type": "array", "items": {"type": "string"}}
-  },
-  "required": ["lemma", "preterite", "past_participle", "auxiliary", "translations"]
-}
+**VerbResponse** - For verbs:
+```python
+class VerbResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    lemma: str
+    preterite: str
+    past_participle: str
+    auxiliary: Literal["haben", "sein"]
+    translations: list[str]
 ```
 
-**PREPOSITION_SCHEMA** - For prepositions (ADP):
-```json
-{
-  "properties": {
-    "lemma": {"type": "string"},
-    "cases": {"type": "array", "items": {"type": "string", "enum": ["akkusativ", "dativ", "genitiv"]}},
-    "translations": {"type": "array", "items": {"type": "string"}}
-  },
-  "required": ["lemma", "cases", "translations"]
-}
+**PrepositionResponse** - For prepositions (ADP):
+```python
+class PrepositionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    lemma: str
+    cases: list[Literal["akkusativ", "dativ", "genitiv"]]
+    translations: list[str]
 ```
 
-**WORD_SCHEMA** - For adjectives, adverbs:
-```json
-{
-  "properties": {
-    "lemma": {"type": "string"},
-    "translations": {"type": "array", "items": {"type": "string"}}
-  },
-  "required": ["lemma", "translations"]
-}
+**WordResponse** - For adjectives, adverbs:
+```python
+class WordResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    lemma: str
+    translations: list[str]
 ```
 
 ---

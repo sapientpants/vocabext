@@ -2,10 +2,10 @@
 
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -27,111 +27,76 @@ def strip_article(lemma: str) -> str:
     return lemma
 
 
-# OpenAI-compatible JSON schemas for structured output
-# These are manually defined to ensure compatibility with strict mode
-NOUN_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "lemma": {"type": "string", "description": "Correct base form (singular, nominative)"},
-        "gender": {
-            "type": "string",
-            "enum": ["der", "die", "das"],
-            "description": "Article for singular form",
-        },
-        "plural": {"type": "string", "description": "Plural form without article"},
-        "translations": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "1-3 English translations",
-        },
-    },
-    "required": ["lemma", "gender", "plural", "translations"],
-    "additionalProperties": False,
-}
+# ============================================================================
+# LLM Response Models (Pydantic)
+# ============================================================================
+# These models define the structure of LLM responses. They are used to:
+# 1. Generate JSON schemas for OpenAI's structured output mode
+# 2. Parse and validate LLM responses
+# 3. Provide type safety throughout the codebase
 
-VERB_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "lemma": {"type": "string", "description": "Correct infinitive form"},
-        "preterite": {"type": "string", "description": "3rd person singular preterite"},
-        "past_participle": {"type": "string", "description": "Past participle without auxiliary"},
-        "auxiliary": {"type": "string", "enum": ["haben", "sein"], "description": "Auxiliary verb"},
-        "translations": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "1-3 English translations",
-        },
-    },
-    "required": ["lemma", "preterite", "past_participle", "auxiliary", "translations"],
-    "additionalProperties": False,
-}
 
-WORD_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "lemma": {"type": "string", "description": "Correct base/dictionary form"},
-        "translations": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "1-3 English translations",
-        },
-    },
-    "required": ["lemma", "translations"],
-    "additionalProperties": False,
-}
+class NounResponse(BaseModel):
+    """LLM response schema for German nouns."""
 
-PREPOSITION_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "lemma": {"type": "string", "description": "Correct preposition form"},
-        "cases": {
-            "type": "array",
-            "items": {"type": "string", "enum": ["akkusativ", "dativ", "genitiv"]},
-            "description": "Grammatical cases this preposition governs",
-        },
-        "translations": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "1-3 English translations",
-        },
-    },
-    "required": ["lemma", "cases", "translations"],
-    "additionalProperties": False,
-}
+    model_config = ConfigDict(extra="forbid")
 
-VALIDATION_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "valid": {"type": "boolean", "description": "True if word is correct as-is"},
-        "corrected_lemma": {
-            "type": "string",
-            "description": "Correct form (same as input if valid)",
-        },
-        "reason": {
-            "type": "string",
-            "description": "Explanation if invalid or corrected, empty if valid",
-        },
-    },
-    "required": ["valid", "corrected_lemma", "reason"],
-    "additionalProperties": False,
-}
+    lemma: str = Field(description="Correct base form (singular, nominative)")
+    gender: Literal["der", "die", "das"] = Field(description="Article for singular form")
+    plural: str = Field(description="Plural form without article")
+    translations: list[str] = Field(description="1-3 English translations")
 
-POS_DETECTION_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "pos": {
-            "type": "string",
-            "enum": ["NOUN", "VERB", "ADJ", "ADV", "ADP"],
-            "description": "Part of speech",
-        },
-        "lemma": {
-            "type": "string",
-            "description": "Correct base/dictionary form of the word",
-        },
-    },
-    "required": ["pos", "lemma"],
-    "additionalProperties": False,
-}
+
+class VerbResponse(BaseModel):
+    """LLM response schema for German verbs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lemma: str = Field(description="Correct infinitive form")
+    preterite: str = Field(description="3rd person singular preterite")
+    past_participle: str = Field(description="Past participle without auxiliary")
+    auxiliary: Literal["haben", "sein"] = Field(description="Auxiliary verb")
+    translations: list[str] = Field(description="1-3 English translations")
+
+
+class PrepositionResponse(BaseModel):
+    """LLM response schema for German prepositions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lemma: str = Field(description="Correct preposition form")
+    cases: list[Literal["akkusativ", "dativ", "genitiv"]] = Field(
+        description="Grammatical cases this preposition governs"
+    )
+    translations: list[str] = Field(description="1-3 English translations")
+
+
+class WordResponse(BaseModel):
+    """LLM response schema for other German words (adjectives, adverbs)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lemma: str = Field(description="Correct base/dictionary form")
+    translations: list[str] = Field(description="1-3 English translations")
+
+
+class ValidationResponse(BaseModel):
+    """LLM response schema for lemma validation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    valid: bool = Field(description="True if word is correct as-is")
+    corrected_lemma: str = Field(description="Correct form (same as input if valid)")
+    reason: str = Field(description="Explanation if invalid or corrected, empty if valid")
+
+
+class POSDetectionResponse(BaseModel):
+    """LLM response schema for part-of-speech detection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pos: Literal["NOUN", "VERB", "ADJ", "ADV", "ADP"] = Field(description="Part of speech")
+    lemma: str = Field(description="Correct base/dictionary form of the word")
 
 
 class EnrichmentResult(BaseModel):
@@ -222,13 +187,13 @@ Provide 1-3 English translations."""
     def _get_schema_for_pos(self, pos: str) -> tuple[dict[str, Any], str]:
         """Get the JSON schema and name for a part of speech."""
         if pos == "NOUN":
-            return NOUN_SCHEMA, "noun_enrichment"
+            return NounResponse.model_json_schema(), "noun_enrichment"
         elif pos == "VERB":
-            return VERB_SCHEMA, "verb_enrichment"
+            return VerbResponse.model_json_schema(), "verb_enrichment"
         elif pos == "ADP":
-            return PREPOSITION_SCHEMA, "preposition_enrichment"
+            return PrepositionResponse.model_json_schema(), "preposition_enrichment"
         else:
-            return WORD_SCHEMA, "word_enrichment"
+            return WordResponse.model_json_schema(), "word_enrichment"
 
     async def _call_chat_api(
         self, prompt: str, schema: dict[str, Any], schema_name: str
@@ -352,7 +317,9 @@ CRITICAL: Do NOT remove prefixes! German compound words and prefixed words are v
 Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-, etc.)"""
 
         try:
-            data = await self._call_chat_api(prompt, VALIDATION_SCHEMA, "lemma_validation")
+            data = await self._call_chat_api(
+                prompt, ValidationResponse.model_json_schema(), "lemma_validation"
+            )
             corrected = data.get("corrected_lemma") or lemma
             corrected = strip_article(corrected)
 
@@ -559,7 +526,9 @@ Also provide the correct base/dictionary form (lemma):
 - For verbs: infinitive form (e.g., "arbeiten" not "arbeitete")
 - For adjectives: base form (e.g., "schnell" not "schneller")"""
 
-        data = await self._call_chat_api(prompt, POS_DETECTION_SCHEMA, "pos_detection")
+        data = await self._call_chat_api(
+            prompt, POSDetectionResponse.model_json_schema(), "pos_detection"
+        )
 
         pos = data.get("pos", "NOUN")
         lemma = data.get("lemma", word)

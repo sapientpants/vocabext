@@ -7,11 +7,12 @@ import pytest
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from app.services.enricher import (
-    NOUN_SCHEMA,
-    VERB_SCHEMA,
-    WORD_SCHEMA,
     Enricher,
     EnrichmentResult,
+    NounResponse,
+    PrepositionResponse,
+    VerbResponse,
+    WordResponse,
     strip_article,
 )
 
@@ -220,34 +221,40 @@ class TestEnricherGetSchemaForPos:
     """Tests for Enricher._get_schema_for_pos method."""
 
     def test_noun_schema(self):
-        """Should return NOUN_SCHEMA for nouns."""
+        """Should return NounResponse schema for nouns."""
         enricher = Enricher()
         schema, name = enricher._get_schema_for_pos("NOUN")
-        assert schema is NOUN_SCHEMA
+        assert schema == NounResponse.model_json_schema()
         assert name == "noun_enrichment"
+        # Verify expected fields are present
+        assert "gender" in schema["properties"]
+        assert "plural" in schema["properties"]
 
     def test_verb_schema(self):
-        """Should return VERB_SCHEMA for verbs."""
+        """Should return VerbResponse schema for verbs."""
         enricher = Enricher()
         schema, name = enricher._get_schema_for_pos("VERB")
-        assert schema is VERB_SCHEMA
+        assert schema == VerbResponse.model_json_schema()
         assert name == "verb_enrichment"
+        # Verify expected fields are present
+        assert "preterite" in schema["properties"]
+        assert "auxiliary" in schema["properties"]
 
     def test_preposition_schema(self):
-        """Should return PREPOSITION_SCHEMA for prepositions."""
-        from app.services.enricher import PREPOSITION_SCHEMA
-
+        """Should return PrepositionResponse schema for prepositions."""
         enricher = Enricher()
         schema, name = enricher._get_schema_for_pos("ADP")
-        assert schema is PREPOSITION_SCHEMA
+        assert schema == PrepositionResponse.model_json_schema()
         assert name == "preposition_enrichment"
+        # Verify expected fields are present
+        assert "cases" in schema["properties"]
 
     def test_other_schema(self):
-        """Should return WORD_SCHEMA for other POS."""
+        """Should return WordResponse schema for other POS."""
         enricher = Enricher()
         for pos in ["ADJ", "ADV"]:
             schema, name = enricher._get_schema_for_pos(pos)
-            assert schema is WORD_SCHEMA
+            assert schema == WordResponse.model_json_schema()
             assert name == "word_enrichment"
 
 
