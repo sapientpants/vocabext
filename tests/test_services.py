@@ -79,8 +79,8 @@ class TestEnricher:
     def test_build_prompt_noun(self):
         """Should build correct prompt for nouns."""
         enricher = Enricher()
-        prompt = enricher._build_prompt("Arbeit", "NOUN", "Die Arbeit ist wichtig.")
-        assert "Noun" in prompt
+        prompt = enricher._build_prompt("Arbeit", "NOUN")
+        assert "noun" in prompt.lower()
         assert "Arbeit" in prompt
         assert "Gender" in prompt
         assert "Plural" in prompt
@@ -88,8 +88,8 @@ class TestEnricher:
     def test_build_prompt_verb(self):
         """Should build correct prompt for verbs."""
         enricher = Enricher()
-        prompt = enricher._build_prompt("arbeiten", "VERB", "Ich arbeite gern.")
-        assert "Verb" in prompt
+        prompt = enricher._build_prompt("arbeiten", "VERB")
+        assert "verb" in prompt.lower()
         assert "arbeiten" in prompt
         assert "Preterite" in prompt
         assert "past participle" in prompt.lower()
@@ -97,9 +97,9 @@ class TestEnricher:
     def test_build_prompt_other(self):
         """Should build correct prompt for other POS."""
         enricher = Enricher()
-        prompt = enricher._build_prompt("schnell", "ADJ", "Das Auto ist schnell.")
+        prompt = enricher._build_prompt("schnell", "ADJ")
         assert "schnell" in prompt
-        assert "base/dictionary form" in prompt
+        assert "translations" in prompt.lower()
 
     def test_get_schema_for_noun(self):
         """Should return noun schema."""
@@ -136,7 +136,7 @@ class TestEnricher:
         with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
             mock_chat.side_effect = APITimeoutError(request=MagicMock())
 
-            result = await enricher.enrich("test", "NOUN", "context")
+            result = await enricher.enrich("test", "NOUN")
             assert result.translations == []
             assert result.error is not None
 
@@ -199,7 +199,7 @@ class TestEnricher:
         with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
             mock_chat.side_effect = APIConnectionError(request=MagicMock())
 
-            result = await enricher.enrich("test", "NOUN", "context")
+            result = await enricher.enrich("test", "NOUN")
             assert result.error is not None
             assert "connect" in result.error.lower()
 
@@ -216,7 +216,7 @@ class TestEnricher:
                 "translations": ["work"],
             }
 
-            result = await enricher.enrich("Arbeit", "NOUN", "context")
+            result = await enricher.enrich("Arbeit", "NOUN")
             assert result.gender == "die"
             assert result.plural == "Arbeiten"
             assert result.translations == ["work"]
@@ -234,7 +234,7 @@ class TestEnricher:
         with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
             mock_chat.side_effect = APIStatusError("Not Found", response=mock_response, body=None)
 
-            result = await enricher.enrich("test", "NOUN", "context")
+            result = await enricher.enrich("test", "NOUN")
             assert result.error is not None
             assert "not found" in result.error.lower()
 
