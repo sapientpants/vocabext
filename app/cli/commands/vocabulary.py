@@ -359,8 +359,8 @@ async def _add_word(word: str, context: str) -> None:
                 lemma = token_info.lemma
                 progress.update(task, description=f"[dim]Detected: {pos}[/] Enriching...")
 
-                # Single LLM call for enrichment (translations + grammar)
-                enrichment = await enricher.enrich(lemma, pos)
+                # Dictionary validation + LLM enrichment (same as process file)
+                enrichment = await enricher.enrich_with_dictionary(lemma, pos, context, session)
                 progress.update(task, description=f"[green]Complete: {pos}[/]")
             except Exception as e:
                 progress.update(task, description="[red]Failed[/]")

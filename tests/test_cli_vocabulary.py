@@ -47,7 +47,7 @@ class TestAddWordCommand:
             mock_tokenizer_instance.analyze_word = MagicMock(return_value=mock_token_info)
 
             mock_enricher_instance = MockEnricher.return_value
-            mock_enricher_instance.enrich = AsyncMock(return_value=mock_enrichment)
+            mock_enricher_instance.enrich_with_dictionary = AsyncMock(return_value=mock_enrichment)
 
             mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=async_session)
             mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
@@ -107,7 +107,7 @@ class TestAddWordCommand:
             mock_tokenizer_instance.analyze_word = MagicMock(return_value=mock_token_info)
 
             mock_enricher_instance = MockEnricher.return_value
-            mock_enricher_instance.enrich = AsyncMock(return_value=mock_enrichment)
+            mock_enricher_instance.enrich_with_dictionary = AsyncMock(return_value=mock_enrichment)
 
             mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=async_session)
             mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
@@ -178,7 +178,7 @@ class TestAddWordCommand:
             mock_tokenizer_instance.analyze_word = MagicMock(return_value=mock_token_info)
 
             mock_enricher_instance = MockEnricher.return_value
-            mock_enricher_instance.enrich = AsyncMock(return_value=mock_enrichment)
+            mock_enricher_instance.enrich_with_dictionary = AsyncMock(return_value=mock_enrichment)
 
             mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=async_session)
             mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
@@ -212,7 +212,7 @@ class TestAddWordCommand:
             mock_tokenizer_instance.analyze_word = MagicMock(return_value=mock_token_info)
 
             mock_enricher_instance = MockEnricher.return_value
-            mock_enricher_instance.enrich = AsyncMock(return_value=mock_enrichment)
+            mock_enricher_instance.enrich_with_dictionary = AsyncMock(return_value=mock_enrichment)
 
             mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=async_session)
             mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
@@ -258,7 +258,7 @@ class TestAddWordCommand:
             mock_tokenizer_instance.analyze_word = MagicMock(return_value=mock_token_info)
 
             mock_enricher_instance = MockEnricher.return_value
-            mock_enricher_instance.enrich = AsyncMock(return_value=mock_enrichment)
+            mock_enricher_instance.enrich_with_dictionary = AsyncMock(return_value=mock_enrichment)
 
             mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=async_session)
             mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
@@ -298,7 +298,7 @@ class TestAddWordCommand:
             mock_tokenizer_instance.analyze_word = MagicMock(return_value=mock_token_info)
 
             mock_enricher_instance = MockEnricher.return_value
-            mock_enricher_instance.enrich = AsyncMock(return_value=mock_enrichment)
+            mock_enricher_instance.enrich_with_dictionary = AsyncMock(return_value=mock_enrichment)
 
             mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=async_session)
             mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
@@ -355,7 +355,7 @@ class TestAddWordCommand:
             mock_tokenizer_instance.analyze_word = MagicMock(return_value=mock_token_info)
 
             mock_enricher_instance = MockEnricher.return_value
-            mock_enricher_instance.enrich = AsyncMock(return_value=mock_enrichment)
+            mock_enricher_instance.enrich_with_dictionary = AsyncMock(return_value=mock_enrichment)
 
             mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=async_session)
             mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=None)

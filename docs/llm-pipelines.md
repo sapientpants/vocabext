@@ -10,9 +10,11 @@ The application uses a hybrid approach with a **unified pipeline** for all word 
 
 ### Key Design Principles
 
-1. **Single LLM call per word** - All enrichment data is fetched in one API call using a unified schema
-2. **spaCy for all POS detection** - Both file processing and manual word addition use spaCy
-3. **Alphabetic-only words** - Only words containing purely alphabetic characters are processed
+1. **Unified pipeline** - Both `vocab add` and `process file` use the same `enrich_with_dictionary()` flow
+2. **Dictionary validation first** - Words are validated against spaCy vocabulary before LLM enrichment
+3. **Single LLM call per word** - All enrichment data is fetched in one API call using POS-specific Pydantic schemas
+4. **spaCy for all POS detection** - Both file processing and manual word addition use spaCy
+5. **Alphabetic-only words** - Only words containing purely alphabetic characters are processed
 
 ### When Each Is Used
 
@@ -22,11 +24,12 @@ The application uses a hybrid approach with a **unified pipeline** for all word 
 | Extract POS from document | Yes | No |
 | Detect POS (manual word add) | Yes | No |
 | Normalize lemma | Yes | No |
-| Validate lemma exists | Yes | No |
+| Validate word exists in dictionary | Yes | No |
 | Get translations | No | Yes |
 | Get noun gender | No | Yes |
 | Get noun plural | No | Yes |
 | Get verb conjugations | No | Yes |
+| Get preposition cases | No | Yes |
 
 ---
 
@@ -105,18 +108,19 @@ sequenceDiagram
     DB-->>CLI: Existing lemmas
     CLI->>CLI: Filter to new words only
 
-    Note over CLI,API: SINGLE API CALL per word
+    Note over CLI,API: Dictionary validation + LLM enrichment per word
     par Parallel enrichment (semaphore limited)
         loop For each new word
-            CLI->>Enricher: enrich(lemma, pos)
-            Enricher->>API: Unified schema request
+            CLI->>Enricher: enrich_with_dictionary(lemma, pos, context, session)
+            Enricher->>Enricher: Validate against spaCy vocabulary
+            Enricher->>API: POS-specific schema request
             API-->>Enricher: EnrichmentResult
-            Enricher-->>CLI: EnrichmentResult
+            Enricher-->>CLI: EnrichmentResult (with dictionary metadata)
         end
     end
 
     CLI->>DB: Batch insert Word records
-    Note over DB: lemma_source = "spacy"
+    Note over DB: lemma_source from dictionary validation
     CLI-->>User: Summary (X new words added)
 ```
 
@@ -154,17 +158,18 @@ sequenceDiagram
     Tokenizer->>Tokenizer: Extract POS and normalize lemma
     Tokenizer-->>CLI: TokenInfo(pos="NOUN", lemma="Hund")
 
+    Note over CLI,API: Dictionary validation + LLM enrichment (same as process file)
+    CLI->>Enricher: enrich_with_dictionary("Hund", "NOUN", context, session)
+    Enricher->>Enricher: Validate against spaCy vocabulary
+    Enricher->>API: POS-specific schema request
+    API-->>Enricher: {gender: "der", plural: "Hunde", translations: ["dog"], ...}
+    Enricher-->>CLI: EnrichmentResult (with dictionary metadata)
+
     CLI->>DB: Check for duplicate (lemma, pos, gender)
     DB-->>CLI: No duplicate found
 
-    Note over CLI,API: SINGLE API CALL - Unified Enrichment
-    CLI->>Enricher: enrich("Hund", "NOUN")
-    Enricher->>API: Unified schema request
-    API-->>Enricher: {gender: "der", plural: "Hunde", translations: ["dog"], ...}
-    Enricher-->>CLI: EnrichmentResult
-
     CLI->>DB: Create Word record
-    Note over DB: lemma_source = "spacy"
+    Note over DB: lemma_source from dictionary validation
     CLI-->>User: Display enriched word
 ```
 
