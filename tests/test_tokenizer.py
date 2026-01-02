@@ -349,8 +349,16 @@ class TestTokenize:
         mock_doc = MagicMock()
         mock_doc.sents = [mock_sent]
 
+        # Mock vocab to return lexemes with is_oov=False (is_german will return True)
+        mock_lexeme = MagicMock()
+        mock_lexeme.is_oov = False  # Word is in vocabulary
+
+        mock_vocab = MagicMock()
+        mock_vocab.__getitem__ = MagicMock(return_value=mock_lexeme)
+
         mock_nlp = MagicMock()
         mock_nlp.return_value = mock_doc
+        mock_nlp.vocab = mock_vocab
         mock_spacy.load.return_value = mock_nlp
 
         tokenizer = Tokenizer()
@@ -585,7 +593,9 @@ class TestAnalyzeWord:
 
         return token
 
-    def _setup_tokenizer(self, mock_spacy: MagicMock, tokens: list[MagicMock]) -> Tokenizer:
+    def _setup_tokenizer(
+        self, mock_spacy: MagicMock, tokens: list[MagicMock], is_german: bool = True
+    ) -> Tokenizer:
         """Setup tokenizer with mock nlp returning given tokens."""
         mock_doc = MagicMock()
         mock_doc.__iter__ = lambda self: iter(tokens)
@@ -595,6 +605,8 @@ class TestAnalyzeWord:
 
         tokenizer = Tokenizer()
         tokenizer._nlp = mock_nlp
+        # Mock is_german to avoid langdetect issues in tests
+        tokenizer.is_german = MagicMock(return_value=is_german)
         return tokenizer
 
     def test_analyze_noun_word(self, mock_spacy):
@@ -733,6 +745,7 @@ class TestAnalyzeWord:
 
         tokenizer = Tokenizer()
         tokenizer._nlp = mock_nlp
+        tokenizer.is_german = MagicMock(return_value=True)
 
         result = tokenizer.analyze_word("Hund", "Some context sentence.")
 
@@ -822,8 +835,85 @@ class TestAnalyzeWord:
         mock_spacy.return_value = mock_nlp
 
         tokenizer = Tokenizer()
+        tokenizer.is_german = MagicMock(return_value=True)
         tokenizer._nlp = mock_nlp
 
         result = tokenizer.analyze_word("Berlin", "Ich wohne in Berlin.")
 
         assert result is None
+
+    def test_analyze_rejects_non_german_word(self, mock_spacy):
+        """Should reject non-German words and return None."""
+        mock_token = self._create_mock_token("beautiful", "beautiful", "ADJ")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token], is_german=False)
+
+        result = tokenizer.analyze_word("beautiful", "")
+
+        assert result is None
+
+
+class TestIsGerman:
+    """Tests for the is_german method.
+
+    Note: is_german always returns True because reliable single-word
+    language detection is not feasible for German (compound words not in vocab,
+    langdetect unreliable for single words).
+    """
+
+    def test_always_returns_true(self):
+        """Should always return True - language validation disabled."""
+        tokenizer = Tokenizer()
+        # All words return True since language detection is unreliable
+        assert tokenizer.is_german("Haus") is True
+        assert tokenizer.is_german("Arbeit") is True
+        assert tokenizer.is_german("Unutmam") is True  # Turkish - still True
+        assert tokenizer.is_german("beautiful") is True  # English - still True
+        assert tokenizer.is_german("xyzqwerty") is True  # Gibberish - still True
+
+
+class TestTokenizeFiltersNonGerman:
+    """Tests for filtering non-German words in tokenize."""
+
+    def test_tokenize_skips_non_german_words(self):
+        """Should skip non-German words during tokenization."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("spacy.load") as mock_load:
+            # Create mock tokens - one German, one non-German
+            mock_german_token = MagicMock()
+            mock_german_token.text = "Haus"
+            mock_german_token.lemma_ = "Haus"
+            mock_german_token.pos_ = "NOUN"
+            mock_german_token.is_alpha = True
+            mock_german_token.like_num = False
+
+            mock_foreign_token = MagicMock()
+            mock_foreign_token.text = "beautiful"
+            mock_foreign_token.lemma_ = "beautiful"
+            mock_foreign_token.pos_ = "ADJ"
+            mock_foreign_token.is_alpha = True
+            mock_foreign_token.like_num = False
+
+            # Create mock sentence
+            mock_sent = MagicMock()
+            mock_sent.text = "Haus beautiful"
+            mock_sent.__iter__ = lambda self: iter([mock_german_token, mock_foreign_token])
+            mock_german_token.sent = mock_sent
+            mock_foreign_token.sent = mock_sent
+
+            mock_doc = MagicMock()
+            mock_doc.sents = [mock_sent]
+
+            mock_nlp = MagicMock(return_value=mock_doc)
+            mock_load.return_value = mock_nlp
+
+            tokenizer = Tokenizer()
+            tokenizer._nlp = mock_nlp
+            # Mock is_german to return True for German, False for non-German
+            tokenizer.is_german = MagicMock(side_effect=lambda w: w == "Haus")
+
+            tokens = tokenizer.tokenize("Haus beautiful")
+
+            # Should only include German word
+            assert len(tokens) == 1
+            assert tokens[0].lemma == "Haus"

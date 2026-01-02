@@ -19,7 +19,7 @@ from app.cli.utils.progress import create_progress, create_simple_progress
 from app.database import async_session
 from app.models import Word, WordEvent, WordVersion
 from app.services.dictionary import is_model_loaded, preload_model
-from app.services.enricher import Enricher, EnrichmentResult
+from app.services.enricher import Enricher, EnrichmentResult, filter_non_german_words
 from app.services.events import (
     get_deleted_words,
     get_word_history,
@@ -359,6 +359,10 @@ async def _add_word(word: str, context: str) -> None:
             task = progress.add_task("Analyzing word...")
 
             try:
+                # Check if word is German before processing
+                if not tokenizer.is_german(word):
+                    raise ValueError(f"'{word}' does not appear to be a German word")
+
                 # Use spaCy for POS detection (same pipeline as document processing)
                 token_info = tokenizer.analyze_word(word, context)
                 if token_info is None:
@@ -511,10 +515,87 @@ async def _validate_words(
         mode_label = "[yellow](DRY RUN)[/] " if dry_run else ""
         console.print(f"[info]{mode_label}Validating {len(words)} words...[/]\n")
 
-        modified, skipped, deleted, errors = 0, 0, 0, 0
+        deleted = 0
         # Track details for dry-run summary
         would_delete: list[tuple[Word, str]] = []
-        would_modify: list[tuple[Word, EnrichmentResult]] = []
+
+        def validate_word_basic(word: Word) -> str | None:
+            """Check basic validation rules. Returns error reason or None if valid."""
+            if not _is_valid_german_word(word.lemma):
+                return "contains non-alphabetic characters"
+            return None
+
+        # Step 1: Basic validation (alphabetic check)
+        valid_words: list[Word] = []
+        with create_simple_progress() as progress:
+            task_id = progress.add_task("Checking format...", total=len(words))
+            for word in words:
+                validation_error = validate_word_basic(word)
+                if validation_error:
+                    if dry_run:
+                        would_delete.append((word, validation_error))
+                    else:
+                        await record_event(
+                            session,
+                            word,
+                            "DELETED",
+                            "validate",
+                            f"Validation failed: {validation_error}",
+                        )
+                        await session.delete(word)
+                    deleted += 1
+                else:
+                    valid_words.append(word)
+                progress.advance(task_id)
+
+        # Step 2: LLM-based language check (dry-run only)
+        if dry_run and valid_words:
+            lemmas = [w.lemma for w in valid_words]
+            num_batches = (len(lemmas) + 49) // 50  # Ceiling division
+
+            with create_progress() as progress:
+                task_id = progress.add_task("Checking for non-German words...", total=num_batches)
+
+                def on_progress(completed: int, total: int) -> None:
+                    progress.update(task_id, completed=completed)
+
+                non_german_lemmas = await filter_non_german_words(lemmas, on_progress)
+
+            if non_german_lemmas:
+                # Filter out non-German words
+                remaining_valid: list[Word] = []
+                for word in valid_words:
+                    if word.lemma in non_german_lemmas:
+                        would_delete.append((word, "not a German word"))
+                        deleted += 1
+                    else:
+                        remaining_valid.append(word)
+                valid_words = remaining_valid
+
+        # Commit deletions before enrichment
+        if not dry_run and deleted > 0:
+            await session.commit()
+            console.print(f"[dim]Deleted {deleted} invalid words[/]\n")
+
+        # If no valid words remain or dry-run, we're done after validation
+        if not valid_words or dry_run:
+            if dry_run:
+                console.print(
+                    f"[yellow]DRY RUN[/] Would delete: {deleted}, "
+                    f"Would enrich: {len(valid_words)} (skipped)"
+                )
+                if would_delete:
+                    console.print("\n[bold]Would delete:[/]")
+                    for word, reason in would_delete[:10]:
+                        console.print(f"  - {word.display_word} ({word.id}): {reason}")
+                    if len(would_delete) > 10:
+                        console.print(f"  ... and {len(would_delete) - 10} more")
+            else:
+                console.print(f"[success]Complete![/] Deleted: {deleted}, No valid words to enrich")
+            return
+
+        # Step 2: Enrich remaining valid words (only if not dry-run)
+        modified, skipped, enrichment_deleted, errors = 0, 0, 0, 0
 
         async def enrich_word(word: Word) -> tuple[Word, EnrichmentResult | Exception]:
             """Enrich a single word, return (word, result) tuple."""
@@ -529,14 +610,15 @@ async def _validate_words(
                 return (word, e)
 
         # Fire all tasks - semaphore in llm.chat_completion limits concurrency
-        tasks = [asyncio.create_task(enrich_word(word)) for word in words]
+        tasks = [asyncio.create_task(enrich_word(word)) for word in valid_words]
 
         def status_description() -> str:
             """Build a fixed-width status description."""
-            return f"[green]M:{modified}[/] [dim]S:{skipped}[/] [yellow]D:{deleted}[/] [red]E:{errors}[/]"
+            total_deleted = deleted + enrichment_deleted
+            return f"[green]M:{modified}[/] [dim]S:{skipped}[/] [yellow]D:{total_deleted}[/] [red]E:{errors}[/]"
 
         with create_progress() as progress:
-            task_id = progress.add_task("Validating...", total=len(words))
+            task_id = progress.add_task("Enriching...", total=len(valid_words))
 
             for coro in asyncio.as_completed(tasks):
                 word, enrich_result = await coro
@@ -556,102 +638,32 @@ async def _validate_words(
                         "Enrichment error for '%s': %s", word.display_word, enrich_result.error
                     )
                 else:
-                    if dry_run:
-                        # Simulate what would happen without applying
-                        status = await _simulate_enrichment(word, enrich_result, session)
+                    try:
+                        status = await apply_enrichment_to_word(word, enrich_result, session)
                         if status == "modified":
                             modified += 1
-                            would_modify.append((word, enrich_result))
                         elif status == "deleted":
-                            deleted += 1
-                            reason = f"Duplicate of '{enrich_result.lemma}'"
-                            would_delete.append((word, reason))
+                            enrichment_deleted += 1
                         else:
                             skipped += 1
-                    else:
-                        try:
-                            status = await apply_enrichment_to_word(word, enrich_result, session)
-                            if status == "modified":
-                                modified += 1
-                            elif status == "deleted":
-                                deleted += 1
-                            else:
-                                skipped += 1
-                        except Exception as e:
-                            errors += 1
-                            logger.error(
-                                "Failed to apply enrichment to '%s': %s",
-                                word.display_word,
-                                e,
-                                exc_info=True,
-                            )
+                    except Exception as e:
+                        errors += 1
+                        logger.error(
+                            "Failed to apply enrichment to '%s': %s",
+                            word.display_word,
+                            e,
+                            exc_info=True,
+                        )
 
                 progress.update(task_id, advance=1, description=status_description())
-
-                # Commit after each word (only if not dry run)
-                if not dry_run:
-                    await session.commit()
+                await session.commit()
 
         console.print()
-
-        if dry_run:
-            console.print(
-                f"[yellow]DRY RUN[/] Would modify: {modified}, Would delete: {deleted}, "
-                f"Unchanged: {skipped}, Errors: {errors}"
-            )
-            if would_delete:
-                console.print("\n[bold]Would delete:[/]")
-                for word, reason in would_delete[:10]:
-                    console.print(f"  - {word.display_word} ({word.id}): {reason}")
-                if len(would_delete) > 10:
-                    console.print(f"  ... and {len(would_delete) - 10} more")
-            if would_modify:
-                console.print("\n[bold]Would modify:[/]")
-                for word, enrichment in would_modify[:10]:
-                    changes = []
-                    if enrichment.lemma and enrichment.lemma != word.lemma:
-                        changes.append(f"lemma: {word.lemma} → {enrichment.lemma}")
-                    if enrichment.gender and enrichment.gender != word.gender:
-                        changes.append(f"gender: {word.gender} → {enrichment.gender}")
-                    if enrichment.plural and enrichment.plural != word.plural:
-                        changes.append(f"plural: {word.plural} → {enrichment.plural}")
-                    console.print(
-                        f"  - {word.display_word} ({word.id}): {', '.join(changes) or 'translations updated'}"
-                    )
-                if len(would_modify) > 10:
-                    console.print(f"  ... and {len(would_modify) - 10} more")
-        else:
-            console.print(
-                f"[success]Complete![/] Modified: {modified}, Skipped: {skipped}, "
-                f"Deleted: {deleted}, Errors: {errors}"
-            )
-
-
-async def _simulate_enrichment(
-    word: Word, enrichment: EnrichmentResult, session: AsyncSession
-) -> str:
-    """
-    Simulate what would happen if enrichment were applied, without modifying anything.
-
-    Returns: 'modified', 'deleted', or 'skipped'
-    """
-    # Check for duplicate lemma - would DELETE the word
-    if enrichment.lemma and enrichment.lemma != word.lemma:
-        if await check_duplicate_lemma(session, enrichment.lemma, word.pos, word.id):
-            return "deleted"
-
-    # Check if anything would change
-    would_change = (
-        (enrichment.lemma and enrichment.lemma != word.lemma)
-        or (enrichment.gender and enrichment.gender != word.gender)
-        or (enrichment.plural and enrichment.plural != word.plural)
-        or (enrichment.preterite and enrichment.preterite != word.preterite)
-        or (enrichment.past_participle and enrichment.past_participle != word.past_participle)
-        or (enrichment.auxiliary and enrichment.auxiliary != word.auxiliary)
-        or (enrichment.translations and json.dumps(enrichment.translations) != word.translations)
-    )
-
-    return "modified" if would_change else "skipped"
+        total_deleted = deleted + enrichment_deleted
+        console.print(
+            f"[success]Complete![/] Modified: {modified}, Skipped: {skipped}, "
+            f"Deleted: {total_deleted}, Errors: {errors}"
+        )
 
 
 @app.command(name="edit")

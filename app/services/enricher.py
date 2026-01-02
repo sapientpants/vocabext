@@ -2,7 +2,10 @@
 
 import json
 import logging
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import BaseModel, ConfigDict, Field
@@ -120,6 +123,99 @@ class EnrichmentResult(BaseModel):
     lemma_source: str | None = None  # "spacy", "dwds", etc.
     dictionary_url: str | None = None  # Link to entry
     dictionary_error: str | None = None  # Error from dictionary lookup (if any)
+
+
+class NonGermanWordsResponse(BaseModel):
+    """LLM response for non-German word detection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    non_german_words: list[str] = Field(
+        description="List of words that are NOT German (foreign words, gibberish, etc.)"
+    )
+
+
+async def _check_batch_for_non_german(batch: list[str]) -> set[str]:
+    """Check a single batch of words for non-German words.
+
+    Args:
+        batch: List of words to check (should be ~50 words)
+
+    Returns:
+        Set of non-German words from this batch
+    """
+    word_list = ", ".join(batch)
+
+    prompt = f"""Which of these words are NOT German? Include foreign words (English, Turkish, etc.) and gibberish, but NOT valid German compound words.
+
+Words: {word_list}
+
+Reply with ONLY the non-German words. If all words are German, reply with an empty list."""
+
+    try:
+        result = await chat_completion(
+            prompt,
+            NonGermanWordsResponse.model_json_schema(),
+            "non_german_words",
+        )
+        non_german = result.get("non_german_words", [])
+        # Only include words that were in the original batch (case-insensitive match)
+        # Map lowercase to original casing for lookup
+        lower_to_orig = {w.lower(): w for w in batch}
+        found: set[str] = set()
+        for word in non_german:
+            orig = lower_to_orig.get(word.lower())
+            if orig:
+                found.add(orig)
+        return found
+    except (APIStatusError, APIConnectionError, APITimeoutError) as e:
+        logger.warning(f"Failed to check batch for non-German words: {e}")
+        # On error, don't filter anything from this batch
+        return set()
+
+
+async def filter_non_german_words(
+    words: list[str],
+    on_progress: "Callable[[int, int], None] | None" = None,
+) -> set[str]:
+    """Use LLM to identify non-German words from a list.
+
+    This is more reliable than vocabulary lookup because:
+    - German compound words are valid even if not in a dictionary
+    - LLM understands language patterns, not just vocabulary
+
+    Args:
+        words: List of words to check
+        on_progress: Optional callback(completed, total) for progress updates
+
+    Returns:
+        Set of words that are NOT German
+    """
+    import asyncio
+
+    if not words:
+        return set()
+
+    # Batch words into chunks to avoid token limits
+    # ~50 words per batch should be safe
+    batch_size = 50
+    batches = [words[i : i + batch_size] for i in range(0, len(words), batch_size)]
+    total_batches = len(batches)
+
+    # Process all batches in parallel (semaphore in chat_completion limits concurrency)
+    tasks = [asyncio.create_task(_check_batch_for_non_german(batch)) for batch in batches]
+
+    all_non_german: set[str] = set()
+    completed = 0
+
+    for coro in asyncio.as_completed(tasks):
+        result = await coro
+        all_non_german.update(result)
+        completed += 1
+        if on_progress:
+            on_progress(completed, total_batches)
+
+    return all_non_german
 
 
 class Enricher:

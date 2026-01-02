@@ -13,6 +13,8 @@ from app.services.enricher import (
     PrepositionResponse,
     VerbResponse,
     WordResponse,
+    _check_batch_for_non_german,
+    filter_non_german_words,
     strip_article,
 )
 
@@ -1015,3 +1017,171 @@ class TestEnricherEnrichWord:
                 await enricher.enrich_word("gehe", session=mock_session)
 
         mock_enrich.assert_called_once_with("gehen", "VERB", "", mock_session)
+
+
+class TestCheckBatchForNonGerman:
+    """Tests for _check_batch_for_non_german function."""
+
+    @pytest.mark.asyncio
+    async def test_filters_non_german_words(self):
+        """Should return non-German words from the batch."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.return_value = {"non_german_words": ["Unutmam", "beautiful"]}
+
+            result = await _check_batch_for_non_german(["Haus", "Unutmam", "Arbeit", "beautiful"])
+
+            assert result == {"Unutmam", "beautiful"}
+
+    @pytest.mark.asyncio
+    async def test_handles_all_german_words(self):
+        """Should return empty set when all words are German."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.return_value = {"non_german_words": []}
+
+            result = await _check_batch_for_non_german(["Haus", "Arbeit", "Schule"])
+
+            assert result == set()
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive_matching(self):
+        """Should match words case-insensitively and return original casing."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            # LLM returns lowercase but original was uppercase
+            mock_chat.return_value = {"non_german_words": ["unutmam"]}
+
+            result = await _check_batch_for_non_german(["Haus", "Unutmam", "Arbeit"])
+
+            assert result == {"Unutmam"}  # Returns original casing
+
+    @pytest.mark.asyncio
+    async def test_ignores_words_not_in_batch(self):
+        """Should ignore words returned by LLM that weren't in the original batch."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            # LLM hallucinates a word that wasn't in the input
+            mock_chat.return_value = {"non_german_words": ["Unutmam", "hallucinated"]}
+
+            result = await _check_batch_for_non_german(["Haus", "Unutmam", "Arbeit"])
+
+            assert result == {"Unutmam"}  # Only includes words from original batch
+
+    @pytest.mark.asyncio
+    async def test_handles_api_error_gracefully(self):
+        """Should return empty set on API error (fail safe)."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.side_effect = APIConnectionError(request=MagicMock())
+
+            result = await _check_batch_for_non_german(["Haus", "Unutmam"])
+
+            assert result == set()  # Fail safe - don't delete anything
+
+    @pytest.mark.asyncio
+    async def test_handles_api_timeout_gracefully(self):
+        """Should return empty set on API timeout (fail safe)."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.side_effect = APITimeoutError(request=MagicMock())
+
+            result = await _check_batch_for_non_german(["Haus", "Unutmam"])
+
+            assert result == set()
+
+    @pytest.mark.asyncio
+    async def test_handles_api_status_error_gracefully(self):
+        """Should return empty set on API status error (fail safe)."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_response = MagicMock()
+            mock_response.status_code = 500
+            mock_chat.side_effect = APIStatusError(
+                message="Server error", response=mock_response, body=None
+            )
+
+            result = await _check_batch_for_non_german(["Haus", "Unutmam"])
+
+            assert result == set()
+
+
+class TestFilterNonGermanWords:
+    """Tests for filter_non_german_words function (parallel batch processing)."""
+
+    @pytest.mark.asyncio
+    async def test_empty_list_returns_empty(self):
+        """Should return empty set for empty input."""
+        result = await filter_non_german_words([])
+        assert result == set()
+
+    @pytest.mark.asyncio
+    async def test_single_batch(self):
+        """Should handle a single batch correctly."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.return_value = {"non_german_words": ["Unutmam"]}
+
+            result = await filter_non_german_words(["Haus", "Unutmam", "Arbeit"])
+
+            assert result == {"Unutmam"}
+            mock_chat.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_parallel_batches(self):
+        """Should process multiple batches in parallel and combine results."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            # Both batches return non-German words
+            mock_chat.side_effect = [
+                {"non_german_words": ["foreign1"]},
+                {"non_german_words": ["foreign2"]},
+            ]
+
+            # Create 60 words (exceeds batch size of 50)
+            words = [f"word{i}" for i in range(60)]
+            words[10] = "foreign1"
+            words[55] = "foreign2"
+
+            result = await filter_non_german_words(words)
+
+            assert result == {"foreign1", "foreign2"}
+            assert mock_chat.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_partial_batch_failure(self):
+        """Should return results from successful batches even if some fail."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            # First batch succeeds, second fails
+            mock_chat.side_effect = [
+                {"non_german_words": ["foreign1"]},
+                APIConnectionError(request=MagicMock()),
+            ]
+
+            # Create 60 words
+            words = [f"word{i}" for i in range(60)]
+            words[10] = "foreign1"
+            words[55] = "foreign2"
+
+            result = await filter_non_german_words(words)
+
+            # Should still get results from successful batch
+            assert result == {"foreign1"}
+
+    @pytest.mark.asyncio
+    async def test_progress_callback(self):
+        """Should call progress callback after each batch."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.side_effect = [
+                {"non_german_words": []},
+                {"non_german_words": []},
+            ]
+
+            # Create 60 words (2 batches)
+            words = [f"word{i}" for i in range(60)]
+
+            progress_calls: list[tuple[int, int]] = []
+
+            def on_progress(completed: int, total: int) -> None:
+                progress_calls.append((completed, total))
+
+            await filter_non_german_words(words, on_progress=on_progress)
+
+            # Should have been called twice (once per batch)
+            assert len(progress_calls) == 2
+            # Both calls should have total=2
+            assert all(total == 2 for _, total in progress_calls)
+            # Completed should be 1 and 2 (in some order due to parallel execution)
+            completed_values = {c for c, _ in progress_calls}
+            assert completed_values == {1, 2}

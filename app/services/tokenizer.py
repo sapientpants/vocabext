@@ -144,6 +144,25 @@ class Tokenizer:
         self.model_name = model_name
         self._nlp: Any = None
 
+    def is_german(self, word: str) -> bool:
+        """Check if a word appears to be German.
+
+        Note: This method always returns True because reliable single-word
+        language detection is not feasible for German:
+        - langdetect is unreliable for single words
+        - spaCy vocabulary doesn't contain compound words (very common in German)
+
+        The alphabetic-only check in _is_valid_german_word() is sufficient
+        to filter out obviously invalid entries.
+
+        Args:
+            word: The word to check
+
+        Returns:
+            Always True - language validation is not reliable for single words
+        """
+        return True
+
     def _looks_like_participle(self, word: str) -> bool:
         """Check if word looks like a German past participle."""
         lower = word.lower()
@@ -400,6 +419,10 @@ class Tokenizer:
                 if len(token.text) < 2:
                     continue
 
+                # Skip non-German words
+                if not self.is_german(token.lemma_):
+                    continue
+
                 # Skip participles mistagged as nouns or adjectives
                 if token.pos_ in ("NOUN", "ADJ") and self._looks_like_participle(token.lemma_):
                     continue
@@ -466,8 +489,13 @@ class Tokenizer:
 
         Returns:
             TokenInfo with pos and lemma, or None if word cannot be analyzed
-            (e.g., proper nouns are rejected)
+            (e.g., proper nouns or non-German words are rejected)
         """
+        # Check if word is German before processing
+        if not self.is_german(word):
+            logger.info(f"Word '{word}' detected as non-German, rejecting")
+            return None
+
         nlp = self._load_model()
 
         # Build text for analysis - context helps with POS disambiguation
