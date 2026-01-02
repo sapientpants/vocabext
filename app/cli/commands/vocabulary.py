@@ -752,21 +752,42 @@ async def _edit_word(word_id: int) -> None:
 
 @app.command(name="delete")
 def delete_word(
-    word_id: int = typer.Argument(..., help="Word ID to delete"),
+    word_id_or_lemma: str = typer.Argument(..., help="Word ID or lemma to delete"),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ) -> None:
-    """Delete a vocabulary word."""
-    run_async(_delete_word(word_id, force))
+    """Delete a vocabulary word by ID or lemma (exact match)."""
+    run_async(_delete_word(word_id_or_lemma, force))
 
 
-async def _delete_word(word_id: int, force: bool) -> None:
+async def _delete_word(word_id_or_lemma: str, force: bool) -> None:
     """Async implementation of delete command."""
     async with async_session() as session:
-        word = await session.get(Word, word_id)
+        # Check if input is numeric (ID) or string (lemma)
+        if word_id_or_lemma.isdigit():
+            word = await session.get(Word, int(word_id_or_lemma))
+            if not word:
+                error_console.print(f"[error]Word with ID {word_id_or_lemma} not found[/]")
+                raise typer.Exit(1)
+        else:
+            # Exact search by lemma
+            stmt = select(Word).where(Word.lemma.ilike(word_id_or_lemma))
+            result = await session.execute(stmt)
+            words = result.scalars().all()
 
-        if not word:
-            error_console.print(f"[error]Word with ID {word_id} not found[/]")
-            raise typer.Exit(1)
+            if not words:
+                error_console.print(f"[error]No word found with lemma '{word_id_or_lemma}'[/]")
+                raise typer.Exit(1)
+
+            if len(words) > 1:
+                # Multiple matches (e.g., same lemma with different POS/gender)
+                error_console.print(
+                    f"[error]Multiple words match '{word_id_or_lemma}'. Use ID instead:[/]"
+                )
+                for w in words:
+                    console.print(f"  ID {w.id}: {w.display_word} ({w.pos})")
+                raise typer.Exit(1)
+
+            word = words[0]
 
         if not force:
             console.print(f"\n[bold]Word to delete:[/] {word.display_word} ({word.pos})")
