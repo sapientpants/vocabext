@@ -548,8 +548,12 @@ async def _validate_words(
                     valid_words.append(word)
                 progress.advance(task_id)
 
-        # Step 2: LLM-based language check (dry-run only)
-        if dry_run and valid_words:
+        # Commit alphabetic check deletions
+        if not dry_run and deleted > 0:
+            await session.commit()
+
+        # Step 2: LLM-based language check
+        if valid_words:
             lemmas = [w.lemma for w in valid_words]
             num_batches = (len(lemmas) + 49) // 50  # Ceiling division
 
@@ -566,15 +570,28 @@ async def _validate_words(
                 remaining_valid: list[Word] = []
                 for word in valid_words:
                     if word.lemma in non_german_lemmas:
-                        would_delete.append((word, "not a German word"))
+                        if dry_run:
+                            would_delete.append((word, "not a German word"))
+                        else:
+                            await record_event(
+                                session,
+                                word,
+                                "DELETED",
+                                "validate",
+                                "Validation failed: not a German word",
+                            )
+                            await session.delete(word)
                         deleted += 1
                     else:
                         remaining_valid.append(word)
                 valid_words = remaining_valid
 
-        # Commit deletions before enrichment
+                # Commit LLM check deletions
+                if not dry_run:
+                    await session.commit()
+
+        # Show deletion summary
         if not dry_run and deleted > 0:
-            await session.commit()
             console.print(f"[dim]Deleted {deleted} invalid words[/]\n")
 
         # If no valid words remain or dry-run, we're done after validation
