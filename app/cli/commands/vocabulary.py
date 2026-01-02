@@ -53,8 +53,14 @@ def build_filtered_query(
     updated_within: str = "",
     review_status: str = "",
     random_order: bool = False,
+    exact: bool = False,
 ) -> Select[tuple[Word]]:
-    """Build word query with filters."""
+    """Build word query with filters.
+
+    Args:
+        search: Search term for lemma matching
+        exact: If True, match lemma exactly. If False (default), match lemmas starting with search term.
+    """
     stmt = select(Word)
     if random_order:
         stmt = stmt.order_by(func.random())
@@ -62,8 +68,11 @@ def build_filtered_query(
         stmt = stmt.order_by(Word.lemma)
 
     if search:
-        escaped_search = _escape_like_pattern(search)
-        stmt = stmt.where(Word.lemma.ilike(f"%{escaped_search}%"))
+        if exact:
+            stmt = stmt.where(Word.lemma.ilike(search))
+        else:
+            escaped_search = _escape_like_pattern(search)
+            stmt = stmt.where(Word.lemma.ilike(f"{escaped_search}%"))
     if pos:
         stmt = stmt.where(Word.pos == pos)
     if sync_status == "synced":
@@ -234,26 +243,29 @@ async def apply_enrichment_to_word(
 
 @app.command(name="list")
 def list_words(
-    search: str = typer.Option("", "--search", "-s", help="Search by lemma"),
+    search: str = typer.Option("", "--search", "-s", help="Search by lemma (prefix match)"),
     pos: str = typer.Option("", "--pos", "-p", help="Filter by POS (NOUN, VERB, ADJ, ADV, ADP)"),
     unsynced: bool = typer.Option(False, "--unsynced", "-u", help="Show only unsynced words"),
     needs_review: bool = typer.Option(
         False, "--review", "-r", help="Show only words needing review"
     ),
+    exact: bool = typer.Option(False, "--exact", "-e", help="Match lemma exactly"),
     limit: int = typer.Option(50, "--limit", "-n", help="Maximum number of words to show"),
 ) -> None:
     """List vocabulary words with optional filters."""
-    run_async(_list_words(search, pos, unsynced, needs_review, limit))
+    run_async(_list_words(search, pos, unsynced, needs_review, exact, limit))
 
 
 async def _list_words(
-    search: str, pos: str, unsynced: bool, needs_review: bool, limit: int
+    search: str, pos: str, unsynced: bool, needs_review: bool, exact: bool, limit: int
 ) -> None:
     """Async implementation of list command."""
     async with async_session() as session:
         sync_status = "unsynced" if unsynced else ""
         review_status = "needs_review" if needs_review else ""
-        stmt = build_filtered_query(search, pos, sync_status, review_status=review_status)
+        stmt = build_filtered_query(
+            search, pos, sync_status, review_status=review_status, exact=exact
+        )
         stmt = stmt.limit(limit)
         result = await session.execute(stmt)
         words = result.scalars().all()
@@ -456,9 +468,10 @@ async def _add_word(word: str, context: str) -> None:
 
 @app.command(name="validate")
 def validate_words(
-    search: str = typer.Option("", "--search", "-s", help="Filter by lemma search"),
+    search: str = typer.Option("", "--search", "-s", help="Filter by lemma (prefix match)"),
     pos: str = typer.Option("", "--pos", "-p", help="Filter by POS"),
     all_words: bool = typer.Option(False, "--all", "-a", help="Validate all words"),
+    exact: bool = typer.Option(False, "--exact", "-e", help="Match lemma exactly"),
     limit: int = typer.Option(0, "--limit", "-n", help="Maximum words to validate (0 = no limit)"),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show what would change without applying"
@@ -469,10 +482,12 @@ def validate_words(
         error_console.print("[error]Specify --search, --pos, or use --all to validate all words[/]")
         raise typer.Exit(1)
 
-    run_async(_validate_words(search, pos, limit, dry_run))
+    run_async(_validate_words(search, pos, exact, limit, dry_run))
 
 
-async def _validate_words(search: str, pos: str, limit: int, dry_run: bool = False) -> None:
+async def _validate_words(
+    search: str, pos: str, exact: bool, limit: int, dry_run: bool = False
+) -> None:
     """Async implementation of validate command."""
     # Pre-load spaCy model before starting (takes ~30-60s on first run)
     if not is_model_loaded():
@@ -483,7 +498,7 @@ async def _validate_words(search: str, pos: str, limit: int, dry_run: bool = Fal
     enricher = Enricher()
 
     async with async_session() as session:
-        stmt = build_filtered_query(search, pos, random_order=True)
+        stmt = build_filtered_query(search, pos, random_order=True, exact=exact)
         if limit > 0:
             stmt = stmt.limit(limit)
         result = await session.execute(stmt)
