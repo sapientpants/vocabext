@@ -55,13 +55,13 @@ def process_file(
 async def _enrich_token(
     enricher: Enricher,
     token: TokenInfo,
-    session: "AsyncSession",
 ) -> tuple[TokenInfo, EnrichmentResult | None]:
     """Enrich a single token with dictionary validation and error handling."""
     try:
-        # Dictionary validation + LLM enrichment (same as vocab add)
+        # Dictionary validation + LLM enrichment
+        # Note: session=None disables caching to avoid conflicts in parallel processing
         enrichment = await enricher.enrich_with_dictionary(
-            token.lemma, token.pos, token.context_sentence, session
+            token.lemma, token.pos, token.context_sentence, session=None
         )
         return token, enrichment
     except Exception as e:
@@ -126,7 +126,7 @@ async def _process_file(file_path: Path, skip_enrichment: bool) -> None:
                         asyncio.Task[tuple[TokenInfo, EnrichmentResult | None]], TokenInfo
                     ] = {}
                     for t in new_tokens:
-                        async_task = asyncio.create_task(_enrich_token(enricher, t, session))
+                        async_task = asyncio.create_task(_enrich_token(enricher, t))
                         task_to_token[async_task] = t
 
                     # Process results as they complete (real-time progress)
