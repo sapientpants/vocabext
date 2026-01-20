@@ -151,6 +151,14 @@ class TestAddWordCommand:
         assert exc_info.value.exit_code == 1
 
     @pytest.mark.asyncio
+    async def test_add_word_single_letter_rejected(self, async_session):
+        """Should reject single-letter words (minimum 2 characters)."""
+        with pytest.raises(Exit) as exc_info:
+            await _add_word("a", "")
+
+        assert exc_info.value.exit_code == 1
+
+    @pytest.mark.asyncio
     async def test_add_word_german_umlauts_accepted(self, async_session):
         """Should accept words with German umlauts."""
         # Mock TokenInfo from spaCy analysis

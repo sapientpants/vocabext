@@ -320,10 +320,21 @@ def add_word(
     run_async(_add_word(word, context))
 
 
-def _is_valid_german_word(word: str) -> bool:
-    """Check if word contains only alphabetic characters (including German umlauts and ß)."""
-    # Python's str.isalpha() correctly handles German characters (äöüß etc.)
-    return word.isalpha()
+def _is_valid_german_word(word: str) -> tuple[bool, str | None]:
+    """Check if word passes basic validation rules.
+
+    Returns:
+        Tuple of (is_valid, error_reason). If valid, error_reason is None.
+    """
+    # Must be at least 2 characters (same as tokenize)
+    if len(word) < 2:
+        return False, "too short (minimum 2 characters)"
+
+    # Must contain only alphabetic characters (including German umlauts and ß)
+    if not word.isalpha():
+        return False, "contains non-alphabetic characters"
+
+    return True, None
 
 
 async def _add_word(word: str, context: str) -> None:
@@ -333,11 +344,10 @@ async def _add_word(word: str, context: str) -> None:
         error_console.print("[error]Word cannot be empty[/]")
         raise typer.Exit(1)
 
-    # Validate word contains only alphabetic characters
-    if not _is_valid_german_word(word):
-        error_console.print(
-            "[error]Word must contain only alphabetic characters (including German umlauts)[/]"
-        )
+    # Validate word passes basic checks
+    is_valid, error_reason = _is_valid_german_word(word)
+    if not is_valid:
+        error_console.print(f"[error]Invalid word: {error_reason}[/]")
         raise typer.Exit(1)
 
     console.print(f"\n[bold]Adding word:[/] {word}\n")
@@ -521,9 +531,8 @@ async def _validate_words(
 
         def validate_word_basic(word: Word) -> str | None:
             """Check basic validation rules. Returns error reason or None if valid."""
-            if not _is_valid_german_word(word.lemma):
-                return "contains non-alphabetic characters"
-            return None
+            is_valid, error_reason = _is_valid_german_word(word.lemma)
+            return error_reason if not is_valid else None
 
         # Step 1: Basic validation (alphabetic check)
         valid_words: list[Word] = []
