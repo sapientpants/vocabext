@@ -53,11 +53,16 @@ def process_file(
 
 
 async def _enrich_token(
-    enricher: Enricher, token: TokenInfo
+    enricher: Enricher,
+    token: TokenInfo,
 ) -> tuple[TokenInfo, EnrichmentResult | None]:
-    """Enrich a single token with error handling."""
+    """Enrich a single token with dictionary validation and error handling."""
     try:
-        enrichment = await enricher.enrich(token.lemma, token.pos, token.context_sentence)
+        # Dictionary validation + LLM enrichment
+        # Note: session=None disables caching to avoid conflicts in parallel processing
+        enrichment = await enricher.enrich_with_dictionary(
+            token.lemma, token.pos, token.context_sentence, session=None
+        )
         return token, enrichment
     except Exception as e:
         logger.error("Failed to enrich '%s' (%s): %s", token.lemma, token.pos, e)
@@ -164,6 +169,9 @@ async def _process_file(file_path: Path, skip_enrichment: bool) -> None:
                 with create_simple_progress() as progress:
                     task = progress.add_task("Creating word records...")
                     for token, enrichment in enrichments:
+                        # Note: enrichment.cases (for prepositions) is intentionally not
+                        # persisted as the Word model doesn't have a cases column.
+                        # Cases are available in EnrichmentResult for display/future use.
                         word = Word(
                             lemma=token.lemma,
                             pos=token.pos,
@@ -175,6 +183,17 @@ async def _process_file(file_path: Path, skip_enrichment: bool) -> None:
                             translations=json.dumps(enrichment.translations)
                             if enrichment and enrichment.translations
                             else None,
+                            # Dictionary-grounded fields
+                            definition_de=enrichment.definition_de if enrichment else None,
+                            synonyms=json.dumps(enrichment.synonyms)
+                            if enrichment and enrichment.synonyms
+                            else None,
+                            frequency=enrichment.frequency if enrichment else None,
+                            ipa=enrichment.ipa if enrichment else None,
+                            lemma_source=enrichment.lemma_source
+                            if enrichment and enrichment.lemma_source
+                            else "spacy",
+                            dictionary_url=enrichment.dictionary_url if enrichment else None,
                         )
                         session.add(word)
                         new_words_created += 1

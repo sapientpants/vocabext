@@ -2,10 +2,13 @@
 
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -27,92 +30,76 @@ def strip_article(lemma: str) -> str:
     return lemma
 
 
-# OpenAI-compatible JSON schemas for structured output
-# These are manually defined to ensure compatibility with strict mode
-NOUN_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "lemma": {"type": "string", "description": "Correct base form (singular, nominative)"},
-        "gender": {
-            "type": "string",
-            "enum": ["der", "die", "das"],
-            "description": "Article for singular form",
-        },
-        "plural": {"type": "string", "description": "Plural form without article"},
-        "translations": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "1-3 English translations",
-        },
-    },
-    "required": ["lemma", "gender", "plural", "translations"],
-    "additionalProperties": False,
-}
+# ============================================================================
+# LLM Response Models (Pydantic)
+# ============================================================================
+# These models define the structure of LLM responses. They are used to:
+# 1. Generate JSON schemas for OpenAI's structured output mode
+# 2. Parse and validate LLM responses
+# 3. Provide type safety throughout the codebase
 
-VERB_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "lemma": {"type": "string", "description": "Correct infinitive form"},
-        "preterite": {"type": "string", "description": "3rd person singular preterite"},
-        "past_participle": {"type": "string", "description": "Past participle without auxiliary"},
-        "auxiliary": {"type": "string", "enum": ["haben", "sein"], "description": "Auxiliary verb"},
-        "translations": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "1-3 English translations",
-        },
-    },
-    "required": ["lemma", "preterite", "past_participle", "auxiliary", "translations"],
-    "additionalProperties": False,
-}
 
-WORD_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "lemma": {"type": "string", "description": "Correct base/dictionary form"},
-        "translations": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "1-3 English translations",
-        },
-    },
-    "required": ["lemma", "translations"],
-    "additionalProperties": False,
-}
+class NounResponse(BaseModel):
+    """LLM response schema for German nouns."""
 
-VALIDATION_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "valid": {"type": "boolean", "description": "True if word is correct as-is"},
-        "corrected_lemma": {
-            "type": "string",
-            "description": "Correct form (same as input if valid)",
-        },
-        "reason": {
-            "type": "string",
-            "description": "Explanation if invalid or corrected, empty if valid",
-        },
-    },
-    "required": ["valid", "corrected_lemma", "reason"],
-    "additionalProperties": False,
-}
+    model_config = ConfigDict(extra="forbid")
 
-POS_DETECTION_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "pos": {
-            "type": "string",
-            "enum": ["NOUN", "VERB", "ADJ", "ADV", "ADP"],
-            "description": "Part of speech",
-        },
-        "lemma": {
-            "type": "string",
-            "description": "Correct base/dictionary form of the word",
-        },
-    },
-    "required": ["pos", "lemma"],
-    "additionalProperties": False,
-}
+    lemma: str = Field(description="Correct base form (singular, nominative)")
+    gender: Literal["der", "die", "das"] = Field(description="Article for singular form")
+    plural: str = Field(description="Plural form without article")
+    translations: list[str] = Field(description="1-3 English translations")
+
+
+class VerbResponse(BaseModel):
+    """LLM response schema for German verbs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lemma: str = Field(description="Correct infinitive form")
+    preterite: str = Field(description="3rd person singular preterite")
+    past_participle: str = Field(description="Past participle without auxiliary")
+    auxiliary: Literal["haben", "sein"] = Field(description="Auxiliary verb")
+    translations: list[str] = Field(description="1-3 English translations")
+
+
+class PrepositionResponse(BaseModel):
+    """LLM response schema for German prepositions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lemma: str = Field(description="Correct preposition form")
+    cases: list[Literal["akkusativ", "dativ", "genitiv"]] = Field(
+        description="Grammatical cases this preposition governs"
+    )
+    translations: list[str] = Field(description="1-3 English translations")
+
+
+class WordResponse(BaseModel):
+    """LLM response schema for other German words (adjectives, adverbs)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lemma: str = Field(description="Correct base/dictionary form")
+    translations: list[str] = Field(description="1-3 English translations")
+
+
+class ValidationResponse(BaseModel):
+    """LLM response schema for lemma validation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    valid: bool = Field(description="True if word is correct as-is")
+    corrected_lemma: str = Field(description="Correct form (same as input if valid)")
+    reason: str = Field(description="Explanation if invalid or corrected, empty if valid")
+
+
+class POSDetectionResponse(BaseModel):
+    """LLM response schema for part-of-speech detection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pos: Literal["NOUN", "VERB", "ADJ", "ADV", "ADP"] = Field(description="Part of speech")
+    lemma: str = Field(description="Correct base/dictionary form of the word")
 
 
 class EnrichmentResult(BaseModel):
@@ -124,6 +111,7 @@ class EnrichmentResult(BaseModel):
     preterite: str | None = None
     past_participle: str | None = None
     auxiliary: str | None = None  # haben/sein
+    cases: list[str] = Field(default_factory=list)  # akkusativ/dativ/genitiv for prepositions
     translations: list[str] = Field(default_factory=list)
     error: str | None = None  # Error message if enrichment failed
 
@@ -135,6 +123,99 @@ class EnrichmentResult(BaseModel):
     lemma_source: str | None = None  # "spacy", "dwds", etc.
     dictionary_url: str | None = None  # Link to entry
     dictionary_error: str | None = None  # Error from dictionary lookup (if any)
+
+
+class NonGermanWordsResponse(BaseModel):
+    """LLM response for non-German word detection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    non_german_words: list[str] = Field(
+        description="List of words that are NOT German (foreign words, gibberish, etc.)"
+    )
+
+
+async def _check_batch_for_non_german(batch: list[str]) -> set[str]:
+    """Check a single batch of words for non-German words.
+
+    Args:
+        batch: List of words to check (should be ~50 words)
+
+    Returns:
+        Set of non-German words from this batch
+    """
+    word_list = ", ".join(batch)
+
+    prompt = f"""Which of these words are NOT German? Include foreign words (English, Turkish, etc.) and gibberish, but NOT valid German compound words.
+
+Words: {word_list}
+
+Reply with ONLY the non-German words. If all words are German, reply with an empty list."""
+
+    try:
+        result = await chat_completion(
+            prompt,
+            NonGermanWordsResponse.model_json_schema(),
+            "non_german_words",
+        )
+        non_german = result.get("non_german_words", [])
+        # Only include words that were in the original batch (case-insensitive match)
+        # Map lowercase to original casing for lookup
+        lower_to_orig = {w.lower(): w for w in batch}
+        found: set[str] = set()
+        for word in non_german:
+            orig = lower_to_orig.get(word.lower())
+            if orig:
+                found.add(orig)
+        return found
+    except (APIStatusError, APIConnectionError, APITimeoutError) as e:
+        logger.warning(f"Failed to check batch for non-German words: {e}")
+        # On error, don't filter anything from this batch
+        return set()
+
+
+async def filter_non_german_words(
+    words: list[str],
+    on_progress: "Callable[[int, int], None] | None" = None,
+) -> set[str]:
+    """Use LLM to identify non-German words from a list.
+
+    This is more reliable than vocabulary lookup because:
+    - German compound words are valid even if not in a dictionary
+    - LLM understands language patterns, not just vocabulary
+
+    Args:
+        words: List of words to check
+        on_progress: Optional callback(completed, total) for progress updates
+
+    Returns:
+        Set of words that are NOT German
+    """
+    import asyncio
+
+    if not words:
+        return set()
+
+    # Batch words into chunks to avoid token limits
+    # ~50 words per batch should be safe
+    batch_size = 50
+    batches = [words[i : i + batch_size] for i in range(0, len(words), batch_size)]
+    total_batches = len(batches)
+
+    # Process all batches in parallel (semaphore in chat_completion limits concurrency)
+    tasks = [asyncio.create_task(_check_batch_for_non_german(batch)) for batch in batches]
+
+    all_non_german: set[str] = set()
+    completed = 0
+
+    for coro in asyncio.as_completed(tasks):
+        result = await coro
+        all_non_german.update(result)
+        completed += 1
+        if on_progress:
+            on_progress(completed, total_batches)
+
+    return all_non_german
 
 
 class Enricher:
@@ -159,51 +240,56 @@ class Enricher:
             self._dictionary = DictionaryService()
         return self._dictionary
 
-    def _build_prompt(self, lemma: str, pos: str, context: str) -> str:
-        """Build the prompt for LLM enrichment."""
+    def _build_prompt(self, lemma: str, pos: str) -> str:
+        """Build the prompt for LLM enrichment based on part of speech."""
         if pos == "NOUN":
-            return f"""Analyze this German noun and provide verified grammatical information.
+            return f"""Analyze this German noun and provide grammatical information.
 
 Word: {lemma}
-Part of speech: Noun
-Context: "{context}"
 
-IMPORTANT: Verify each field is correct according to German grammar rules:
-- Gender must match the noun's actual grammatical gender
-- Plural must follow correct German pluralization patterns (e.g., -e, -en, -er, -s, umlaut changes)
-- Double-check spelling of all forms"""
+Provide:
+- Gender (der/die/das)
+- Plural form
+- 1-3 English translations"""
 
         elif pos == "VERB":
-            return f"""Analyze this German verb and provide verified grammatical information.
+            return f"""Analyze this German verb and provide grammatical information.
 
 Word: {lemma}
-Part of speech: Verb
-Context: "{context}"
 
-IMPORTANT: Verify each field is correct according to German grammar rules:
-- Check if this is a regular or irregular (strong) verb
-- Preterite must use correct vowel changes for strong verbs
-- Past participle must use correct prefix (ge-) and ending (-t or -en)
-- Auxiliary must be correct (sein for movement/state-change verbs, haben for most others)
-- Double-check spelling of all conjugated forms"""
+Provide:
+- Preterite (3rd person singular)
+- Past participle
+- Auxiliary (haben or sein)
+- 1-3 English translations"""
 
-        else:  # ADJ, ADV, ADP
-            return f"""Analyze this German word and provide verified information.
+        elif pos == "ADP":
+            return f"""Analyze this German preposition and provide grammatical information.
+
+Word: {lemma}
+
+Provide:
+- Cases: which grammatical cases this preposition governs (akkusativ, dativ, and/or genitiv)
+- 1-3 English translations"""
+
+        else:  # ADJ, ADV
+            return f"""Analyze this German word and provide translations.
 
 Word: {lemma}
 Part of speech: {pos}
-Context: "{context}"
 
-IMPORTANT: Verify the lemma is the correct base/dictionary form (not inflected or declined)."""
+Provide 1-3 English translations."""
 
     def _get_schema_for_pos(self, pos: str) -> tuple[dict[str, Any], str]:
         """Get the JSON schema and name for a part of speech."""
         if pos == "NOUN":
-            return NOUN_SCHEMA, "noun_enrichment"
+            return NounResponse.model_json_schema(), "noun_enrichment"
         elif pos == "VERB":
-            return VERB_SCHEMA, "verb_enrichment"
+            return VerbResponse.model_json_schema(), "verb_enrichment"
+        elif pos == "ADP":
+            return PrepositionResponse.model_json_schema(), "preposition_enrichment"
         else:
-            return WORD_SCHEMA, "word_enrichment"
+            return WordResponse.model_json_schema(), "word_enrichment"
 
     async def _call_chat_api(
         self, prompt: str, schema: dict[str, Any], schema_name: str
@@ -211,16 +297,19 @@ IMPORTANT: Verify the lemma is the correct base/dictionary form (not inflected o
         """Make a request to OpenAI's Chat Completions API with structured output."""
         return await chat_completion(prompt, schema, schema_name, model=self.model)
 
-    async def enrich(self, lemma: str, pos: str, context: str) -> EnrichmentResult:
+    async def enrich(self, lemma: str, pos: str) -> EnrichmentResult:
         """
         Enrich a word with grammatical information via OpenAI API.
 
+        Makes a single LLM call per word using POS-specific schemas for
+        tighter validation and smaller responses.
+
         Returns EnrichmentResult with available fields populated.
 
-        Uses a semaphore to limit concurrent LLM requests (max 20),
+        Uses a semaphore to limit concurrent LLM requests,
         balancing throughput with API rate limits.
         """
-        prompt = self._build_prompt(lemma, pos, context)
+        prompt = self._build_prompt(lemma, pos)
         schema, schema_name = self._get_schema_for_pos(pos)
 
         try:
@@ -273,6 +362,8 @@ IMPORTANT: Verify the lemma is the correct base/dictionary form (not inflected o
             result.preterite = data.get("preterite")
             result.past_participle = data.get("past_participle")
             result.auxiliary = data.get("auxiliary")
+        elif pos == "ADP":
+            result.cases = data.get("cases", [])
 
         return result
 
@@ -322,7 +413,9 @@ CRITICAL: Do NOT remove prefixes! German compound words and prefixed words are v
 Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-, etc.)"""
 
         try:
-            data = await self._call_chat_api(prompt, VALIDATION_SCHEMA, "lemma_validation")
+            data = await self._call_chat_api(
+                prompt, ValidationResponse.model_json_schema(), "lemma_validation"
+            )
             corrected = data.get("corrected_lemma") or lemma
             corrected = strip_article(corrected)
 
@@ -374,7 +467,7 @@ Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-,
         lemma_to_use = validation.get("corrected_lemma", lemma)
 
         # Get enrichment with validated/corrected lemma
-        result = await self.enrich(lemma_to_use, pos, context)
+        result = await self.enrich(lemma_to_use, pos)
 
         # If lemma was corrected, include the correction in result
         if lemma_to_use != lemma:
@@ -401,7 +494,7 @@ Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-,
         Args:
             lemma: The word lemma to enrich
             pos: Part of speech (NOUN, VERB, ADJ, ADV, ADP)
-            context: Context sentence for better LLM results
+            context: Context sentence (currently unused, reserved for future use)
             session: Database session for dictionary caching
 
         Returns:
@@ -468,7 +561,7 @@ Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-,
         # - Verb conjugations (preterite, past_participle, auxiliary)
         # - Gender (if dictionary didn't provide it)
         try:
-            llm_result = await self.enrich(result.lemma or lemma, pos, context)
+            llm_result = await self.enrich(result.lemma or lemma, pos)
 
             # Merge LLM results (prefer dictionary data where available)
             result.translations = llm_result.translations
@@ -484,6 +577,13 @@ Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-,
                 result.past_participle = llm_result.past_participle
                 result.auxiliary = llm_result.auxiliary
 
+            elif pos == "ADP":
+                # Copy preposition cases from LLM result
+                # Note: cases are not currently persisted to the database (Word model
+                # doesn't have a cases column). They are included in EnrichmentResult
+                # for potential future use or display purposes.
+                result.cases = llm_result.cases
+
             # Note: We intentionally do NOT use LLM lemma corrections here.
             # Local dictionary (spaCy) is the source of truth for lemma validation.
             # LLM corrections were non-deterministic and caused idempotency issues.
@@ -497,10 +597,14 @@ Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-,
 
     async def detect_pos(self, word: str, context: str = "") -> tuple[str, str]:
         """
-        Detect part of speech and normalize lemma for a German word.
+        Detect part of speech and normalize lemma for a German word using LLM.
 
-        Uses LLM to determine the most likely POS for the word, which is more
-        reliable than spaCy for isolated words without context.
+        Note: This is a legacy/alternative method that uses an LLM call for POS
+        detection. The preferred approach is to use Tokenizer.analyze_word()
+        which performs POS detection locally via spaCy (faster, free, offline).
+
+        This method is kept for cases where LLM-based detection might be preferred,
+        such as when spaCy's accuracy is insufficient for certain edge cases.
 
         Args:
             word: The German word to analyze
@@ -529,7 +633,9 @@ Also provide the correct base/dictionary form (lemma):
 - For verbs: infinitive form (e.g., "arbeiten" not "arbeitete")
 - For adjectives: base form (e.g., "schnell" not "schneller")"""
 
-        data = await self._call_chat_api(prompt, POS_DETECTION_SCHEMA, "pos_detection")
+        data = await self._call_chat_api(
+            prompt, POSDetectionResponse.model_json_schema(), "pos_detection"
+        )
 
         pos = data.get("pos", "NOUN")
         lemma = data.get("lemma", word)

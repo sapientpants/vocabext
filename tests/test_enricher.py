@@ -7,11 +7,14 @@ import pytest
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from app.services.enricher import (
-    NOUN_SCHEMA,
-    VERB_SCHEMA,
-    WORD_SCHEMA,
     Enricher,
     EnrichmentResult,
+    NounResponse,
+    PrepositionResponse,
+    VerbResponse,
+    WordResponse,
+    _check_batch_for_non_german,
+    filter_non_german_words,
     strip_article,
 )
 
@@ -176,17 +179,16 @@ class TestEnricherBuildPrompt:
     def test_noun_prompt(self):
         """Should build noun-specific prompt."""
         enricher = Enricher()
-        prompt = enricher._build_prompt("Hund", "NOUN", "Der Hund bellt.")
+        prompt = enricher._build_prompt("Hund", "NOUN")
         assert "German noun" in prompt
         assert "Hund" in prompt
-        assert "Der Hund bellt." in prompt
         assert "Gender" in prompt
         assert "Plural" in prompt
 
     def test_verb_prompt(self):
         """Should build verb-specific prompt."""
         enricher = Enricher()
-        prompt = enricher._build_prompt("gehen", "VERB", "Ich gehe nach Hause.")
+        prompt = enricher._build_prompt("gehen", "VERB")
         assert "German verb" in prompt
         assert "gehen" in prompt
         assert "Preterite" in prompt
@@ -196,7 +198,7 @@ class TestEnricherBuildPrompt:
     def test_adjective_prompt(self):
         """Should build generic prompt for adjectives."""
         enricher = Enricher()
-        prompt = enricher._build_prompt("schnell", "ADJ", "Das Auto ist schnell.")
+        prompt = enricher._build_prompt("schnell", "ADJ")
         assert "German word" in prompt
         assert "schnell" in prompt
         assert "ADJ" in prompt
@@ -204,34 +206,57 @@ class TestEnricherBuildPrompt:
     def test_adverb_prompt(self):
         """Should build generic prompt for adverbs."""
         enricher = Enricher()
-        prompt = enricher._build_prompt("oft", "ADV", "Ich gehe oft spazieren.")
+        prompt = enricher._build_prompt("oft", "ADV")
         assert "German word" in prompt
         assert "ADV" in prompt
+
+    def test_preposition_prompt(self):
+        """Should build preposition-specific prompt."""
+        enricher = Enricher()
+        prompt = enricher._build_prompt("mit", "ADP")
+        assert "preposition" in prompt.lower()
+        assert "mit" in prompt
+        assert "Cases" in prompt
 
 
 class TestEnricherGetSchemaForPos:
     """Tests for Enricher._get_schema_for_pos method."""
 
     def test_noun_schema(self):
-        """Should return NOUN_SCHEMA for nouns."""
+        """Should return NounResponse schema for nouns."""
         enricher = Enricher()
         schema, name = enricher._get_schema_for_pos("NOUN")
-        assert schema is NOUN_SCHEMA
+        assert schema == NounResponse.model_json_schema()
         assert name == "noun_enrichment"
+        # Verify expected fields are present
+        assert "gender" in schema["properties"]
+        assert "plural" in schema["properties"]
 
     def test_verb_schema(self):
-        """Should return VERB_SCHEMA for verbs."""
+        """Should return VerbResponse schema for verbs."""
         enricher = Enricher()
         schema, name = enricher._get_schema_for_pos("VERB")
-        assert schema is VERB_SCHEMA
+        assert schema == VerbResponse.model_json_schema()
         assert name == "verb_enrichment"
+        # Verify expected fields are present
+        assert "preterite" in schema["properties"]
+        assert "auxiliary" in schema["properties"]
+
+    def test_preposition_schema(self):
+        """Should return PrepositionResponse schema for prepositions."""
+        enricher = Enricher()
+        schema, name = enricher._get_schema_for_pos("ADP")
+        assert schema == PrepositionResponse.model_json_schema()
+        assert name == "preposition_enrichment"
+        # Verify expected fields are present
+        assert "cases" in schema["properties"]
 
     def test_other_schema(self):
-        """Should return WORD_SCHEMA for other POS."""
+        """Should return WordResponse schema for other POS."""
         enricher = Enricher()
-        for pos in ["ADJ", "ADV", "ADP"]:
+        for pos in ["ADJ", "ADV"]:
             schema, name = enricher._get_schema_for_pos(pos)
-            assert schema is WORD_SCHEMA
+            assert schema == WordResponse.model_json_schema()
             assert name == "word_enrichment"
 
 
@@ -250,7 +275,7 @@ class TestEnricherEnrich:
         }
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.return_value = mock_data
-            result = await enricher.enrich("Hund", "NOUN", "Der Hund bellt.")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert result.lemma == "Hund"  # Article stripped
         assert result.gender == "der"
@@ -271,7 +296,7 @@ class TestEnricherEnrich:
         }
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.return_value = mock_data
-            result = await enricher.enrich("gehen", "VERB", "Ich gehe.")
+            result = await enricher.enrich("gehen", "VERB")
 
         assert result.lemma == "gehen"
         assert result.preterite == "ging"
@@ -289,7 +314,7 @@ class TestEnricherEnrich:
         }
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.return_value = mock_data
-            result = await enricher.enrich("schnell", "ADJ", "Das ist schnell.")
+            result = await enricher.enrich("schnell", "ADJ")
 
         assert result.lemma == "schnell"
         assert result.translations == ["fast", "quick"]
@@ -301,7 +326,7 @@ class TestEnricherEnrich:
         enricher = Enricher()
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = APITimeoutError(request=MagicMock())
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert result.error == "OpenAI request timed out"
 
@@ -313,7 +338,7 @@ class TestEnricherEnrich:
         response.status_code = 401
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = APIStatusError(message="Unauthorized", response=response, body=None)
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert "Invalid OpenAI API key" in result.error
 
@@ -325,7 +350,7 @@ class TestEnricherEnrich:
         response.status_code = 404
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = APIStatusError(message="Not found", response=response, body=None)
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert "not found" in result.error
 
@@ -337,7 +362,7 @@ class TestEnricherEnrich:
         response.status_code = 429
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = APIStatusError(message="Rate limited", response=response, body=None)
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert "rate limit exceeded" in result.error
 
@@ -349,7 +374,7 @@ class TestEnricherEnrich:
         response.status_code = 500
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = APIStatusError(message="Server error", response=response, body=None)
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert "HTTP 500" in result.error
 
@@ -359,7 +384,7 @@ class TestEnricherEnrich:
         enricher = Enricher()
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = APIConnectionError(request=MagicMock())
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert "Cannot connect to OpenAI API" in result.error
 
@@ -369,7 +394,7 @@ class TestEnricherEnrich:
         enricher = Enricher()
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = json.JSONDecodeError("Invalid", "doc", 0)
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert "Invalid JSON response" in result.error
 
@@ -379,7 +404,7 @@ class TestEnricherEnrich:
         enricher = Enricher()
         with patch.object(enricher, "_call_chat_api", new_callable=AsyncMock) as mock:
             mock.side_effect = RuntimeError("Something went wrong")
-            result = await enricher.enrich("Hund", "NOUN", "context")
+            result = await enricher.enrich("Hund", "NOUN")
 
         assert "Enrichment error" in result.error
 
@@ -421,6 +446,18 @@ class TestEnricherBuildResult:
         assert result.preterite == "lief"
         assert result.past_participle == "gelaufen"
         assert result.auxiliary == "sein"
+
+    def test_build_result_preposition_fields(self):
+        """Should set preposition-specific fields."""
+        enricher = Enricher()
+        data = {
+            "lemma": "mit",
+            "cases": ["dativ"],
+            "translations": ["with"],
+        }
+        result = enricher._build_result(data, "ADP")
+        assert result.cases == ["dativ"]
+        assert result.translations == ["with"]
 
     def test_build_result_no_lemma(self):
         """Should handle missing lemma."""
@@ -615,7 +652,7 @@ class TestEnricherValidateAndEnrich:
 
         assert result.lemma == "Hund"
         assert result.gender == "der"
-        mock_enrich.assert_called_once_with("Hund", "NOUN", "context")
+        mock_enrich.assert_called_once_with("Hund", "NOUN")
 
     @pytest.mark.asyncio
     async def test_validate_and_enrich_with_correction(self):
@@ -632,7 +669,7 @@ class TestEnricherValidateAndEnrich:
                 result = await enricher.validate_and_enrich("Hunde", "NOUN", "context")
 
         assert result.lemma == "Hund"
-        mock_enrich.assert_called_once_with("Hund", "NOUN", "context")
+        mock_enrich.assert_called_once_with("Hund", "NOUN")
 
     @pytest.mark.asyncio
     async def test_validate_and_enrich_validation_error(self):
@@ -885,6 +922,29 @@ class TestEnricherEnrichWithDictionary:
         assert result.gender is None
         assert result.preterite is None
 
+    @pytest.mark.asyncio
+    async def test_enrich_with_dictionary_preposition(self):
+        """Should handle preposition enrichment with cases."""
+        mock_dict = MagicMock()
+        mock_dict.validate_and_ground_lemma = AsyncMock(return_value=("mit", True, "spacy"))
+        mock_dict.get_enrichment_data = AsyncMock(return_value=None)
+
+        enricher = Enricher(dictionary_service=mock_dict)
+        enricher._dictionary_enabled = True
+
+        with patch.object(enricher, "enrich", new_callable=AsyncMock) as mock_enrich:
+            mock_enrich.return_value = EnrichmentResult(
+                lemma="mit",
+                cases=["dativ"],
+                translations=["with"],
+            )
+            result = await enricher.enrich_with_dictionary("mit", "ADP", "context")
+
+        # ADP gets cases from LLM
+        assert result.lemma == "mit"
+        assert result.cases == ["dativ"]
+        assert result.translations == ["with"]
+
 
 class TestEnricherDetectPos:
     """Tests for Enricher.detect_pos method."""
@@ -980,3 +1040,171 @@ class TestEnricherEnrichWord:
                 await enricher.enrich_word("gehe", session=mock_session)
 
         mock_enrich.assert_called_once_with("gehen", "VERB", "", mock_session)
+
+
+class TestCheckBatchForNonGerman:
+    """Tests for _check_batch_for_non_german function."""
+
+    @pytest.mark.asyncio
+    async def test_filters_non_german_words(self):
+        """Should return non-German words from the batch."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.return_value = {"non_german_words": ["Unutmam", "beautiful"]}
+
+            result = await _check_batch_for_non_german(["Haus", "Unutmam", "Arbeit", "beautiful"])
+
+            assert result == {"Unutmam", "beautiful"}
+
+    @pytest.mark.asyncio
+    async def test_handles_all_german_words(self):
+        """Should return empty set when all words are German."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.return_value = {"non_german_words": []}
+
+            result = await _check_batch_for_non_german(["Haus", "Arbeit", "Schule"])
+
+            assert result == set()
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive_matching(self):
+        """Should match words case-insensitively and return original casing."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            # LLM returns lowercase but original was uppercase
+            mock_chat.return_value = {"non_german_words": ["unutmam"]}
+
+            result = await _check_batch_for_non_german(["Haus", "Unutmam", "Arbeit"])
+
+            assert result == {"Unutmam"}  # Returns original casing
+
+    @pytest.mark.asyncio
+    async def test_ignores_words_not_in_batch(self):
+        """Should ignore words returned by LLM that weren't in the original batch."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            # LLM hallucinates a word that wasn't in the input
+            mock_chat.return_value = {"non_german_words": ["Unutmam", "hallucinated"]}
+
+            result = await _check_batch_for_non_german(["Haus", "Unutmam", "Arbeit"])
+
+            assert result == {"Unutmam"}  # Only includes words from original batch
+
+    @pytest.mark.asyncio
+    async def test_handles_api_error_gracefully(self):
+        """Should return empty set on API error (fail safe)."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.side_effect = APIConnectionError(request=MagicMock())
+
+            result = await _check_batch_for_non_german(["Haus", "Unutmam"])
+
+            assert result == set()  # Fail safe - don't delete anything
+
+    @pytest.mark.asyncio
+    async def test_handles_api_timeout_gracefully(self):
+        """Should return empty set on API timeout (fail safe)."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.side_effect = APITimeoutError(request=MagicMock())
+
+            result = await _check_batch_for_non_german(["Haus", "Unutmam"])
+
+            assert result == set()
+
+    @pytest.mark.asyncio
+    async def test_handles_api_status_error_gracefully(self):
+        """Should return empty set on API status error (fail safe)."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_response = MagicMock()
+            mock_response.status_code = 500
+            mock_chat.side_effect = APIStatusError(
+                message="Server error", response=mock_response, body=None
+            )
+
+            result = await _check_batch_for_non_german(["Haus", "Unutmam"])
+
+            assert result == set()
+
+
+class TestFilterNonGermanWords:
+    """Tests for filter_non_german_words function (parallel batch processing)."""
+
+    @pytest.mark.asyncio
+    async def test_empty_list_returns_empty(self):
+        """Should return empty set for empty input."""
+        result = await filter_non_german_words([])
+        assert result == set()
+
+    @pytest.mark.asyncio
+    async def test_single_batch(self):
+        """Should handle a single batch correctly."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.return_value = {"non_german_words": ["Unutmam"]}
+
+            result = await filter_non_german_words(["Haus", "Unutmam", "Arbeit"])
+
+            assert result == {"Unutmam"}
+            mock_chat.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_parallel_batches(self):
+        """Should process multiple batches in parallel and combine results."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            # Both batches return non-German words
+            mock_chat.side_effect = [
+                {"non_german_words": ["foreign1"]},
+                {"non_german_words": ["foreign2"]},
+            ]
+
+            # Create 60 words (exceeds batch size of 50)
+            words = [f"word{i}" for i in range(60)]
+            words[10] = "foreign1"
+            words[55] = "foreign2"
+
+            result = await filter_non_german_words(words)
+
+            assert result == {"foreign1", "foreign2"}
+            assert mock_chat.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_partial_batch_failure(self):
+        """Should return results from successful batches even if some fail."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            # First batch succeeds, second fails
+            mock_chat.side_effect = [
+                {"non_german_words": ["foreign1"]},
+                APIConnectionError(request=MagicMock()),
+            ]
+
+            # Create 60 words
+            words = [f"word{i}" for i in range(60)]
+            words[10] = "foreign1"
+            words[55] = "foreign2"
+
+            result = await filter_non_german_words(words)
+
+            # Should still get results from successful batch
+            assert result == {"foreign1"}
+
+    @pytest.mark.asyncio
+    async def test_progress_callback(self):
+        """Should call progress callback after each batch."""
+        with patch("app.services.enricher.chat_completion", new_callable=AsyncMock) as mock_chat:
+            mock_chat.side_effect = [
+                {"non_german_words": []},
+                {"non_german_words": []},
+            ]
+
+            # Create 60 words (2 batches)
+            words = [f"word{i}" for i in range(60)]
+
+            progress_calls: list[tuple[int, int]] = []
+
+            def on_progress(completed: int, total: int) -> None:
+                progress_calls.append((completed, total))
+
+            await filter_non_german_words(words, on_progress=on_progress)
+
+            # Should have been called twice (once per batch)
+            assert len(progress_calls) == 2
+            # Both calls should have total=2
+            assert all(total == 2 for _, total in progress_calls)
+            # Completed should be 1 and 2 (in some order due to parallel execution)
+            completed_values = {c for c, _ in progress_calls}
+            assert completed_values == {1, 2}
