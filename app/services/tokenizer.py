@@ -144,6 +144,35 @@ class Tokenizer:
         self.model_name = model_name
         self._nlp: Any = None
 
+    def is_german(self, word: str) -> bool:
+        """Check if a word passes basic German word validity checks.
+
+        This performs structural validation to ensure the word consists of
+        valid alphabetic characters (including German-specific letters like
+        ä, ö, ü, ß) and is long enough to be meaningful.
+
+        Note: This is NOT full language detection. Reliable single-word
+        language detection is not feasible for German because:
+        - langdetect is unreliable for single words
+        - spaCy vocabulary doesn't contain compound words (very common in German)
+
+        For actual non-German word detection, use the LLM-based
+        filter_non_german_words() batch function in enricher.py.
+
+        Args:
+            word: The word to check
+
+        Returns:
+            True if word passes basic validity checks, False otherwise
+        """
+        # Must be at least 2 characters
+        if len(word) < 2:
+            return False
+        # Must contain only alphabetic characters (including German umlauts and ß)
+        if not word.isalpha():
+            return False
+        return True
+
     def _looks_like_participle(self, word: str) -> bool:
         """Check if word looks like a German past participle."""
         lower = word.lower()
@@ -400,6 +429,10 @@ class Tokenizer:
                 if len(token.text) < 2:
                     continue
 
+                # Skip non-German words
+                if not self.is_german(token.lemma_):
+                    continue
+
                 # Skip participles mistagged as nouns or adjectives
                 if token.pos_ in ("NOUN", "ADJ") and self._looks_like_participle(token.lemma_):
                     continue
@@ -452,3 +485,110 @@ class Tokenizer:
 
         logger.info(f"Extracted {len(tokens)} unique tokens from text")
         return tokens
+
+    def analyze_word(self, word: str, context: str = "") -> TokenInfo | None:
+        """
+        Analyze a single word to determine its POS and normalized lemma.
+
+        Uses the same spaCy pipeline as tokenize() for consistency.
+        This is the preferred method for single-word analysis (e.g., vocab add).
+
+        Args:
+            word: The German word to analyze
+            context: Optional context sentence for better POS detection
+
+        Returns:
+            TokenInfo with pos and lemma, or None if the word is rejected
+            (proper nouns, non-German words, or invalid input)
+        """
+        # Check if word is German before processing
+        if not self.is_german(word):
+            logger.info(f"Word '{word}' detected as non-German, rejecting")
+            return None
+
+        nlp = self._load_model()
+
+        # Build text for analysis - context helps with POS disambiguation
+        if context:
+            # Include context for better POS detection
+            text = context
+        else:
+            # Just the word alone
+            text = word
+
+        doc = nlp(text)
+
+        # Find the token matching our word
+        word_lower = word.lower()
+        best_match: TokenInfo | None = None
+        is_proper_noun = False
+
+        for token in doc:
+            # Match by text (case-insensitive)
+            if token.text.lower() == word_lower or token.lemma_.lower() == word_lower:
+                # Reject proper nouns (names, places, etc.)
+                if token.pos_ == "PROPN":
+                    is_proper_noun = True
+                    logger.info(f"Word '{word}' detected as proper noun (PROPN), rejecting")
+                    continue
+
+                # Skip irrelevant POS
+                if token.pos_ not in self.RELEVANT_POS:
+                    continue
+
+                # Skip punctuation, spaces, numbers
+                if not token.is_alpha or token.like_num:
+                    continue
+
+                # Get canonical lemma based on POS (same logic as tokenize)
+                if token.pos_ == "NOUN":
+                    lemma = self._diminutive_to_base(token.lemma_).capitalize().strip()
+                elif token.pos_ == "VERB":
+                    if self._looks_like_participle(token.lemma_):
+                        infinitive = self._participle_to_infinitive(token.lemma_)
+                        lemma = (infinitive if infinitive else token.lemma_.lower()).strip()
+                    else:
+                        lemma = token.lemma_.lower().strip()
+                elif token.pos_ == "ADJ":
+                    lemma = self._adjective_to_base_form(token.lemma_).strip()
+                elif token.pos_ == "ADP":
+                    lower = token.lemma_.lower().strip()
+                    lemma = self.PREPOSITION_CONTRACTIONS.get(lower, lower)
+                else:
+                    lemma = token.lemma_.lower().strip()
+
+                # Get context sentence
+                sent_text = token.sent.text.strip() if token.sent else context or word
+
+                best_match = TokenInfo(
+                    surface_form=token.text,
+                    lemma=lemma,
+                    pos=token.pos_,
+                    context_sentence=sent_text,
+                )
+                break  # Found a match
+
+        # If no match in context, try analyzing the word alone
+        if best_match is None and context and not is_proper_noun:
+            return self.analyze_word(word, "")
+
+        # If detected as proper noun, return None (reject it),
+        # regardless of whether a non-proper-noun match was also found
+        if is_proper_noun:
+            return None
+
+        # If still no match, default to NOUN (most common for unknown words)
+        if best_match is None:
+            # German nouns are capitalized - always capitalize for default NOUN
+            # Note: When we reach here, context is always empty because we recurse
+            # with empty context above when no match is found with context present
+            best_match = TokenInfo(
+                surface_form=word,
+                lemma=word.capitalize(),
+                pos="NOUN",  # Default assumption
+                context_sentence=context or word,
+            )
+            logger.debug(f"Word '{word}' not found in spaCy analysis, defaulting to NOUN")
+
+        logger.info(f"Analyzed word '{word}': pos={best_match.pos}, lemma='{best_match.lemma}'")
+        return best_match

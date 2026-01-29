@@ -19,7 +19,7 @@ from app.cli.utils.progress import create_progress, create_simple_progress
 from app.database import async_session
 from app.models import Word, WordEvent, WordVersion
 from app.services.dictionary import is_model_loaded, preload_model
-from app.services.enricher import Enricher, EnrichmentResult
+from app.services.enricher import Enricher, EnrichmentResult, filter_non_german_words
 from app.services.events import (
     get_deleted_words,
     get_word_history,
@@ -27,6 +27,7 @@ from app.services.events import (
     revert_to_event,
     undo_last_change,
 )
+from app.services.tokenizer import Tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +53,14 @@ def build_filtered_query(
     updated_within: str = "",
     review_status: str = "",
     random_order: bool = False,
+    exact: bool = False,
 ) -> Select[tuple[Word]]:
-    """Build word query with filters."""
+    """Build word query with filters.
+
+    Args:
+        search: Search term for lemma matching
+        exact: If True, match lemma exactly. If False (default), match lemmas starting with search term.
+    """
     stmt = select(Word)
     if random_order:
         stmt = stmt.order_by(func.random())
@@ -61,8 +68,11 @@ def build_filtered_query(
         stmt = stmt.order_by(Word.lemma)
 
     if search:
-        escaped_search = _escape_like_pattern(search)
-        stmt = stmt.where(Word.lemma.ilike(f"%{escaped_search}%"))
+        if exact:
+            stmt = stmt.where(Word.lemma.ilike(search))
+        else:
+            escaped_search = _escape_like_pattern(search)
+            stmt = stmt.where(Word.lemma.ilike(f"{escaped_search}%"))
     if pos:
         stmt = stmt.where(Word.pos == pos)
     if sync_status == "synced":
@@ -233,26 +243,29 @@ async def apply_enrichment_to_word(
 
 @app.command(name="list")
 def list_words(
-    search: str = typer.Option("", "--search", "-s", help="Search by lemma"),
+    search: str = typer.Option("", "--search", "-s", help="Search by lemma (prefix match)"),
     pos: str = typer.Option("", "--pos", "-p", help="Filter by POS (NOUN, VERB, ADJ, ADV, ADP)"),
     unsynced: bool = typer.Option(False, "--unsynced", "-u", help="Show only unsynced words"),
     needs_review: bool = typer.Option(
         False, "--review", "-r", help="Show only words needing review"
     ),
+    exact: bool = typer.Option(False, "--exact", "-e", help="Match lemma exactly"),
     limit: int = typer.Option(50, "--limit", "-n", help="Maximum number of words to show"),
 ) -> None:
     """List vocabulary words with optional filters."""
-    run_async(_list_words(search, pos, unsynced, needs_review, limit))
+    run_async(_list_words(search, pos, unsynced, needs_review, exact, limit))
 
 
 async def _list_words(
-    search: str, pos: str, unsynced: bool, needs_review: bool, limit: int
+    search: str, pos: str, unsynced: bool, needs_review: bool, exact: bool, limit: int
 ) -> None:
     """Async implementation of list command."""
     async with async_session() as session:
         sync_status = "unsynced" if unsynced else ""
         review_status = "needs_review" if needs_review else ""
-        stmt = build_filtered_query(search, pos, sync_status, review_status=review_status)
+        stmt = build_filtered_query(
+            search, pos, sync_status, review_status=review_status, exact=exact
+        )
         stmt = stmt.limit(limit)
         result = await session.execute(stmt)
         words = result.scalars().all()
@@ -307,6 +320,23 @@ def add_word(
     run_async(_add_word(word, context))
 
 
+def _is_valid_german_word(word: str) -> tuple[bool, str | None]:
+    """Check if word passes basic validation rules.
+
+    Returns:
+        Tuple of (is_valid, error_reason). If valid, error_reason is None.
+    """
+    # Must be at least 2 characters (same as tokenize)
+    if len(word) < 2:
+        return False, "too short (minimum 2 characters)"
+
+    # Must contain only alphabetic characters (including German umlauts and ß)
+    if not word.isalpha():
+        return False, "contains non-alphabetic characters"
+
+    return True, None
+
+
 async def _add_word(word: str, context: str) -> None:
     """Async implementation of add command."""
     word = word.strip()
@@ -314,22 +344,49 @@ async def _add_word(word: str, context: str) -> None:
         error_console.print("[error]Word cannot be empty[/]")
         raise typer.Exit(1)
 
+    # Validate word passes basic checks
+    is_valid, error_reason = _is_valid_german_word(word)
+    if not is_valid:
+        error_console.print(f"[error]Invalid word: {error_reason}[/]")
+        raise typer.Exit(1)
+
     console.print(f"\n[bold]Adding word:[/] {word}\n")
 
+    # Pre-load spaCy model if needed
+    if not is_model_loaded():
+        console.print("[dim]Loading language model...[/]", end="", highlight=False)
+        preload_model()
+        console.print(" [green]done[/]")
+
     async with async_session() as session:
-        # Step 1: Detect POS and enrich
+        # Step 1: Use spaCy to detect POS and normalize lemma (same as process file)
+        tokenizer = Tokenizer()
         enricher = Enricher()
         pos: str | None = None
         enrichment: EnrichmentResult | None = None
 
         with create_simple_progress() as progress:
-            task = progress.add_task("Detecting part of speech and enriching...")
+            task = progress.add_task("Analyzing word...")
 
             try:
-                pos, enrichment = await enricher.enrich_word(word, context, session)
-                progress.update(task, description=f"[green]Detected: {pos}[/]")
+                # Use spaCy for POS detection (same pipeline as document processing)
+                token_info = tokenizer.analyze_word(word, context)
+                if token_info is None:
+                    # analyze_word returns None for proper nouns (names, places, etc.)
+                    raise ValueError(
+                        f"'{word}' appears to be a proper noun (name/place) and cannot be added"
+                    )
+
+                pos = token_info.pos
+                lemma = token_info.lemma
+                progress.update(task, description=f"[dim]Detected: {pos}[/] Enriching...")
+
+                # Dictionary validation (spaCy) + single LLM call for enrichment
+                # Same pipeline as process file - see docs/llm-pipelines.md
+                enrichment = await enricher.enrich_with_dictionary(lemma, pos, context, session)
+                progress.update(task, description=f"[green]Complete: {pos}[/]")
             except Exception as e:
-                progress.update(task, description="[red]Enrichment failed[/]")
+                progress.update(task, description="[red]Failed[/]")
                 logger.exception("Failed to enrich word")
                 error_console.print(f"[error]Failed to enrich word: {e}[/]")
                 raise typer.Exit(1) from e
@@ -338,10 +395,7 @@ async def _add_word(word: str, context: str) -> None:
             error_console.print("[error]Enrichment returned no result[/]")
             raise typer.Exit(1)
 
-        # Use enriched lemma if available
-        lemma = enrichment.lemma or word
-
-        # Step 2: Check for duplicate
+        # Check for duplicate
         # Include gender for nouns to align with database unique constraint on (lemma, pos, gender)
         conditions = [Word.lemma == lemma, Word.pos == pos]
         if pos == "NOUN" and enrichment.gender is not None:
@@ -359,7 +413,9 @@ async def _add_word(word: str, context: str) -> None:
                 console.print(f"[dim]Translations: {', '.join(existing.translations_list)}[/]")
             raise typer.Exit(1)
 
-        # Step 3: Create Word record
+        # Create Word record
+        # Note: enrichment.cases (for prepositions) is intentionally not persisted
+        # as the Word model doesn't have a cases column.
         needs_review = bool(enrichment.error)
         review_reason = enrichment.error if enrichment.error else None
 
@@ -376,7 +432,7 @@ async def _add_word(word: str, context: str) -> None:
             synonyms=json.dumps(enrichment.synonyms) if enrichment.synonyms else None,
             frequency=enrichment.frequency,
             ipa=enrichment.ipa,
-            lemma_source=enrichment.lemma_source,
+            lemma_source="spacy",  # Lemma comes from spaCy tokenizer
             dictionary_url=enrichment.dictionary_url,
             needs_review=needs_review,
             review_reason=review_reason,
@@ -422,9 +478,10 @@ async def _add_word(word: str, context: str) -> None:
 
 @app.command(name="validate")
 def validate_words(
-    search: str = typer.Option("", "--search", "-s", help="Filter by lemma search"),
+    search: str = typer.Option("", "--search", "-s", help="Filter by lemma (prefix match)"),
     pos: str = typer.Option("", "--pos", "-p", help="Filter by POS"),
     all_words: bool = typer.Option(False, "--all", "-a", help="Validate all words"),
+    exact: bool = typer.Option(False, "--exact", "-e", help="Match lemma exactly"),
     limit: int = typer.Option(0, "--limit", "-n", help="Maximum words to validate (0 = no limit)"),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show what would change without applying"
@@ -435,10 +492,12 @@ def validate_words(
         error_console.print("[error]Specify --search, --pos, or use --all to validate all words[/]")
         raise typer.Exit(1)
 
-    run_async(_validate_words(search, pos, limit, dry_run))
+    run_async(_validate_words(search, pos, exact, limit, dry_run))
 
 
-async def _validate_words(search: str, pos: str, limit: int, dry_run: bool = False) -> None:
+async def _validate_words(
+    search: str, pos: str, exact: bool, limit: int, dry_run: bool = False
+) -> None:
     """Async implementation of validate command."""
     # Pre-load spaCy model before starting (takes ~30-60s on first run)
     if not is_model_loaded():
@@ -449,7 +508,7 @@ async def _validate_words(search: str, pos: str, limit: int, dry_run: bool = Fal
     enricher = Enricher()
 
     async with async_session() as session:
-        stmt = build_filtered_query(search, pos, random_order=True)
+        stmt = build_filtered_query(search, pos, random_order=True, exact=exact)
         if limit > 0:
             stmt = stmt.limit(limit)
         result = await session.execute(stmt)
@@ -462,10 +521,103 @@ async def _validate_words(search: str, pos: str, limit: int, dry_run: bool = Fal
         mode_label = "[yellow](DRY RUN)[/] " if dry_run else ""
         console.print(f"[info]{mode_label}Validating {len(words)} words...[/]\n")
 
-        modified, skipped, deleted, errors = 0, 0, 0, 0
+        deleted = 0
         # Track details for dry-run summary
         would_delete: list[tuple[Word, str]] = []
-        would_modify: list[tuple[Word, EnrichmentResult]] = []
+
+        def validate_word_basic(word: Word) -> str | None:
+            """Check basic validation rules. Returns error reason or None if valid."""
+            is_valid, error_reason = _is_valid_german_word(word.lemma)
+            return error_reason if not is_valid else None
+
+        # Step 1: Basic validation (alphabetic check)
+        valid_words: list[Word] = []
+        with create_simple_progress() as progress:
+            task_id = progress.add_task("Checking format...", total=len(words))
+            for word in words:
+                validation_error = validate_word_basic(word)
+                if validation_error:
+                    if dry_run:
+                        would_delete.append((word, validation_error))
+                    else:
+                        await record_event(
+                            session,
+                            word,
+                            "DELETED",
+                            "validate",
+                            f"Validation failed: {validation_error}",
+                        )
+                        await session.delete(word)
+                    deleted += 1
+                else:
+                    valid_words.append(word)
+                progress.advance(task_id)
+
+        # Commit alphabetic check deletions
+        if not dry_run and deleted > 0:
+            await session.commit()
+
+        # Step 2: LLM-based language check
+        if valid_words:
+            lemmas = [w.lemma for w in valid_words]
+            num_batches = (len(lemmas) + 49) // 50  # Ceiling division
+
+            with create_progress() as progress:
+                task_id = progress.add_task("Checking for non-German words...", total=num_batches)
+
+                def on_progress(completed: int, total: int) -> None:
+                    progress.update(task_id, completed=completed)
+
+                non_german_lemmas = await filter_non_german_words(lemmas, on_progress)
+
+            if non_german_lemmas:
+                # Filter out non-German words
+                remaining_valid: list[Word] = []
+                for word in valid_words:
+                    if word.lemma in non_german_lemmas:
+                        if dry_run:
+                            would_delete.append((word, "not a German word"))
+                        else:
+                            await record_event(
+                                session,
+                                word,
+                                "DELETED",
+                                "validate",
+                                "Validation failed: not a German word",
+                            )
+                            await session.delete(word)
+                        deleted += 1
+                    else:
+                        remaining_valid.append(word)
+                valid_words = remaining_valid
+
+                # Commit LLM check deletions
+                if not dry_run:
+                    await session.commit()
+
+        # Show deletion summary
+        if not dry_run and deleted > 0:
+            console.print(f"[dim]Deleted {deleted} invalid words[/]\n")
+
+        # If no valid words remain or dry-run, we're done after validation
+        if not valid_words or dry_run:
+            if dry_run:
+                console.print(
+                    f"[yellow]DRY RUN[/] Would delete: {deleted}, "
+                    f"Would enrich: {len(valid_words)} (skipped)"
+                )
+                if would_delete:
+                    console.print("\n[bold]Would delete:[/]")
+                    for word, reason in would_delete[:10]:
+                        console.print(f"  - {word.display_word} ({word.id}): {reason}")
+                    if len(would_delete) > 10:
+                        console.print(f"  ... and {len(would_delete) - 10} more")
+            else:
+                console.print(f"[success]Complete![/] Deleted: {deleted}, No valid words to enrich")
+            return
+
+        # Step 3: Enrich remaining valid words (only if not dry-run)
+        modified, skipped, enrichment_deleted, errors = 0, 0, 0, 0
 
         async def enrich_word(word: Word) -> tuple[Word, EnrichmentResult | Exception]:
             """Enrich a single word, return (word, result) tuple."""
@@ -480,14 +632,15 @@ async def _validate_words(search: str, pos: str, limit: int, dry_run: bool = Fal
                 return (word, e)
 
         # Fire all tasks - semaphore in llm.chat_completion limits concurrency
-        tasks = [asyncio.create_task(enrich_word(word)) for word in words]
+        tasks = [asyncio.create_task(enrich_word(word)) for word in valid_words]
 
         def status_description() -> str:
             """Build a fixed-width status description."""
-            return f"[green]M:{modified}[/] [dim]S:{skipped}[/] [yellow]D:{deleted}[/] [red]E:{errors}[/]"
+            total_deleted = deleted + enrichment_deleted
+            return f"[green]M:{modified}[/] [dim]S:{skipped}[/] [yellow]D:{total_deleted}[/] [red]E:{errors}[/]"
 
         with create_progress() as progress:
-            task_id = progress.add_task("Validating...", total=len(words))
+            task_id = progress.add_task("Enriching...", total=len(valid_words))
 
             for coro in asyncio.as_completed(tasks):
                 word, enrich_result = await coro
@@ -507,102 +660,32 @@ async def _validate_words(search: str, pos: str, limit: int, dry_run: bool = Fal
                         "Enrichment error for '%s': %s", word.display_word, enrich_result.error
                     )
                 else:
-                    if dry_run:
-                        # Simulate what would happen without applying
-                        status = await _simulate_enrichment(word, enrich_result, session)
+                    try:
+                        status = await apply_enrichment_to_word(word, enrich_result, session)
                         if status == "modified":
                             modified += 1
-                            would_modify.append((word, enrich_result))
                         elif status == "deleted":
-                            deleted += 1
-                            reason = f"Duplicate of '{enrich_result.lemma}'"
-                            would_delete.append((word, reason))
+                            enrichment_deleted += 1
                         else:
                             skipped += 1
-                    else:
-                        try:
-                            status = await apply_enrichment_to_word(word, enrich_result, session)
-                            if status == "modified":
-                                modified += 1
-                            elif status == "deleted":
-                                deleted += 1
-                            else:
-                                skipped += 1
-                        except Exception as e:
-                            errors += 1
-                            logger.error(
-                                "Failed to apply enrichment to '%s': %s",
-                                word.display_word,
-                                e,
-                                exc_info=True,
-                            )
+                    except Exception as e:
+                        errors += 1
+                        logger.error(
+                            "Failed to apply enrichment to '%s': %s",
+                            word.display_word,
+                            e,
+                            exc_info=True,
+                        )
 
                 progress.update(task_id, advance=1, description=status_description())
-
-                # Commit after each word (only if not dry run)
-                if not dry_run:
-                    await session.commit()
+                await session.commit()
 
         console.print()
-
-        if dry_run:
-            console.print(
-                f"[yellow]DRY RUN[/] Would modify: {modified}, Would delete: {deleted}, "
-                f"Unchanged: {skipped}, Errors: {errors}"
-            )
-            if would_delete:
-                console.print("\n[bold]Would delete:[/]")
-                for word, reason in would_delete[:10]:
-                    console.print(f"  - {word.display_word} ({word.id}): {reason}")
-                if len(would_delete) > 10:
-                    console.print(f"  ... and {len(would_delete) - 10} more")
-            if would_modify:
-                console.print("\n[bold]Would modify:[/]")
-                for word, enrichment in would_modify[:10]:
-                    changes = []
-                    if enrichment.lemma and enrichment.lemma != word.lemma:
-                        changes.append(f"lemma: {word.lemma} → {enrichment.lemma}")
-                    if enrichment.gender and enrichment.gender != word.gender:
-                        changes.append(f"gender: {word.gender} → {enrichment.gender}")
-                    if enrichment.plural and enrichment.plural != word.plural:
-                        changes.append(f"plural: {word.plural} → {enrichment.plural}")
-                    console.print(
-                        f"  - {word.display_word} ({word.id}): {', '.join(changes) or 'translations updated'}"
-                    )
-                if len(would_modify) > 10:
-                    console.print(f"  ... and {len(would_modify) - 10} more")
-        else:
-            console.print(
-                f"[success]Complete![/] Modified: {modified}, Skipped: {skipped}, "
-                f"Deleted: {deleted}, Errors: {errors}"
-            )
-
-
-async def _simulate_enrichment(
-    word: Word, enrichment: EnrichmentResult, session: AsyncSession
-) -> str:
-    """
-    Simulate what would happen if enrichment were applied, without modifying anything.
-
-    Returns: 'modified', 'deleted', or 'skipped'
-    """
-    # Check for duplicate lemma - would DELETE the word
-    if enrichment.lemma and enrichment.lemma != word.lemma:
-        if await check_duplicate_lemma(session, enrichment.lemma, word.pos, word.id):
-            return "deleted"
-
-    # Check if anything would change
-    would_change = (
-        (enrichment.lemma and enrichment.lemma != word.lemma)
-        or (enrichment.gender and enrichment.gender != word.gender)
-        or (enrichment.plural and enrichment.plural != word.plural)
-        or (enrichment.preterite and enrichment.preterite != word.preterite)
-        or (enrichment.past_participle and enrichment.past_participle != word.past_participle)
-        or (enrichment.auxiliary and enrichment.auxiliary != word.auxiliary)
-        or (enrichment.translations and json.dumps(enrichment.translations) != word.translations)
-    )
-
-    return "modified" if would_change else "skipped"
+        total_deleted = deleted + enrichment_deleted
+        console.print(
+            f"[success]Complete![/] Modified: {modified}, Skipped: {skipped}, "
+            f"Deleted: {total_deleted}, Errors: {errors}"
+        )
 
 
 @app.command(name="edit")
@@ -703,21 +786,42 @@ async def _edit_word(word_id: int) -> None:
 
 @app.command(name="delete")
 def delete_word(
-    word_id: int = typer.Argument(..., help="Word ID to delete"),
+    word_id_or_lemma: str = typer.Argument(..., help="Word ID or lemma to delete"),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ) -> None:
-    """Delete a vocabulary word."""
-    run_async(_delete_word(word_id, force))
+    """Delete a vocabulary word by ID or lemma (exact match)."""
+    run_async(_delete_word(word_id_or_lemma, force))
 
 
-async def _delete_word(word_id: int, force: bool) -> None:
+async def _delete_word(word_id_or_lemma: str, force: bool) -> None:
     """Async implementation of delete command."""
     async with async_session() as session:
-        word = await session.get(Word, word_id)
+        # Check if input is numeric (ID) or string (lemma)
+        if word_id_or_lemma.isdigit():
+            word = await session.get(Word, int(word_id_or_lemma))
+            if not word:
+                error_console.print(f"[error]Word with ID {word_id_or_lemma} not found[/]")
+                raise typer.Exit(1)
+        else:
+            # Exact search by lemma
+            stmt = select(Word).where(Word.lemma.ilike(word_id_or_lemma))
+            result = await session.execute(stmt)
+            words = result.scalars().all()
 
-        if not word:
-            error_console.print(f"[error]Word with ID {word_id} not found[/]")
-            raise typer.Exit(1)
+            if not words:
+                error_console.print(f"[error]No word found with lemma '{word_id_or_lemma}'[/]")
+                raise typer.Exit(1)
+
+            if len(words) > 1:
+                # Multiple matches (e.g., same lemma with different POS/gender)
+                error_console.print(
+                    f"[error]Multiple words match '{word_id_or_lemma}'. Use ID instead:[/]"
+                )
+                for w in words:
+                    console.print(f"  ID {w.id}: {w.display_word} ({w.pos})")
+                raise typer.Exit(1)
+
+            word = words[0]
 
         if not force:
             console.print(f"\n[bold]Word to delete:[/] {word.display_word} ({word.pos})")
