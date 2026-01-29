@@ -15,8 +15,9 @@ venv/
 ENV/
 
 # Data files
-data/
-*.db
+data/uploads/
+data/*.log
+data/*.log.*
 
 # IDE
 .idea/
