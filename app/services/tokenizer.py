@@ -144,26 +144,22 @@ class Tokenizer:
         self.model_name = model_name
         self._nlp: Any = None
 
-    def is_german(self, word: str) -> bool:
-        """Check if a word passes basic German word validity checks.
+    def has_valid_structure(self, word: str) -> bool:
+        """Check if a word has valid structure for vocabulary extraction.
 
-        This performs structural validation to ensure the word consists of
-        valid alphabetic characters (including German-specific letters like
-        ä, ö, ü, ß) and is long enough to be meaningful.
+        This performs structural validation only - it checks that the word:
+        - Is at least 2 characters long
+        - Contains only alphabetic characters (including ä, ö, ü, ß)
 
-        Note: This is NOT full language detection. Reliable single-word
-        language detection is not feasible for German because:
-        - langdetect is unreliable for single words
-        - spaCy vocabulary doesn't contain compound words (very common in German)
-
-        For actual non-German word detection, use the LLM-based
-        filter_non_german_words() batch function in enricher.py.
+        This is NOT language detection. It cannot determine if a word is
+        German vs English vs Turkish. For language detection, use the
+        LLM-based filter_non_german_words() in enricher.py.
 
         Args:
             word: The word to check
 
         Returns:
-            True if word passes basic validity checks, False otherwise
+            True if word has valid structure, False otherwise
         """
         # Must be at least 2 characters
         if len(word) < 2:
@@ -429,8 +425,8 @@ class Tokenizer:
                 if len(token.text) < 2:
                     continue
 
-                # Skip non-German words
-                if not self.is_german(token.lemma_):
+                # Skip words with invalid structure
+                if not self.has_valid_structure(token.lemma_):
                     continue
 
                 # Skip participles mistagged as nouns or adjectives
@@ -501,9 +497,9 @@ class Tokenizer:
             TokenInfo with pos and lemma, or None if the word is rejected
             (proper nouns, non-German words, or invalid input)
         """
-        # Check if word is German before processing
-        if not self.is_german(word):
-            logger.info(f"Word '{word}' detected as non-German, rejecting")
+        # Check if word has valid structure before processing
+        if not self.has_valid_structure(word):
+            logger.info(f"Word '{word}' has invalid structure, rejecting")
             return None
 
         nlp = self._load_model()

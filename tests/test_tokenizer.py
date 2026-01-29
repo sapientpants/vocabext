@@ -349,7 +349,7 @@ class TestTokenize:
         mock_doc = MagicMock()
         mock_doc.sents = [mock_sent]
 
-        # Mock vocab to return lexemes with is_oov=False (is_german will return True)
+        # Mock vocab to return lexemes with is_oov=False (has_valid_structure will return True)
         mock_lexeme = MagicMock()
         mock_lexeme.is_oov = False  # Word is in vocabulary
 
@@ -594,7 +594,7 @@ class TestAnalyzeWord:
         return token
 
     def _setup_tokenizer(
-        self, mock_spacy: MagicMock, tokens: list[MagicMock], is_german: bool = True
+        self, mock_spacy: MagicMock, tokens: list[MagicMock], has_valid_structure: bool = True
     ) -> Tokenizer:
         """Setup tokenizer with mock nlp returning given tokens."""
         mock_doc = MagicMock()
@@ -605,8 +605,8 @@ class TestAnalyzeWord:
 
         tokenizer = Tokenizer()
         tokenizer._nlp = mock_nlp
-        # Mock is_german so tests can control word validation behavior
-        tokenizer.is_german = MagicMock(return_value=is_german)
+        # Mock has_valid_structure so tests can control word validation behavior
+        tokenizer.has_valid_structure = MagicMock(return_value=has_valid_structure)
         return tokenizer
 
     def test_analyze_noun_word(self, mock_spacy):
@@ -745,7 +745,7 @@ class TestAnalyzeWord:
 
         tokenizer = Tokenizer()
         tokenizer._nlp = mock_nlp
-        tokenizer.is_german = MagicMock(return_value=True)
+        tokenizer.has_valid_structure = MagicMock(return_value=True)
 
         result = tokenizer.analyze_word("Hund", "Some context sentence.")
 
@@ -835,88 +835,92 @@ class TestAnalyzeWord:
         mock_spacy.return_value = mock_nlp
 
         tokenizer = Tokenizer()
-        tokenizer.is_german = MagicMock(return_value=True)
+        tokenizer.has_valid_structure = MagicMock(return_value=True)
         tokenizer._nlp = mock_nlp
 
         result = tokenizer.analyze_word("Berlin", "Ich wohne in Berlin.")
 
         assert result is None
 
-    def test_analyze_rejects_non_german_word(self, mock_spacy):
-        """Should reject non-German words and return None."""
-        mock_token = self._create_mock_token("beautiful", "beautiful", "ADJ")
-        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token], is_german=False)
+    def test_analyze_rejects_word_with_invalid_structure(self, mock_spacy):
+        """Should reject words with invalid structure and return None."""
+        mock_token = self._create_mock_token("x1", "x1", "ADJ")
+        tokenizer = self._setup_tokenizer(mock_spacy, [mock_token], has_valid_structure=False)
 
-        result = tokenizer.analyze_word("beautiful", "")
+        result = tokenizer.analyze_word("x1", "")
 
         assert result is None
 
 
-class TestIsGerman:
-    """Tests for the is_german method.
+class TestHasValidStructure:
+    """Tests for the has_valid_structure method.
 
-    Note: is_german performs basic structural validation (alphabetic, min length)
-    but does NOT perform full language detection because reliable single-word
-    language detection is not feasible for German (compound words not in vocab,
-    langdetect unreliable for single words). For actual non-German word detection,
-    use the LLM-based filter_non_german_words() batch function in enricher.py.
+    Note: has_valid_structure performs basic structural validation only
+    (alphabetic chars, min length). It does NOT perform language detection.
+    For actual non-German word detection, use the LLM-based
+    filter_non_german_words() batch function in enricher.py.
     """
 
     def test_returns_true_for_valid_words(self):
         """Should return True for valid-looking words (alphabetic, min 2 chars)."""
         tokenizer = Tokenizer()
-        assert tokenizer.is_german("Haus") is True
-        assert tokenizer.is_german("Arbeit") is True
-        assert tokenizer.is_german("Unutmam") is True  # Turkish but looks valid
-        assert tokenizer.is_german("beautiful") is True  # English but looks valid
-        assert tokenizer.is_german("xyzqwerty") is True  # Gibberish but looks valid
-        assert tokenizer.is_german("äöü") is True  # German umlauts
-        assert tokenizer.is_german("Größe") is True  # Contains ß
+        assert tokenizer.has_valid_structure("Haus") is True
+        assert tokenizer.has_valid_structure("Arbeit") is True
+        assert tokenizer.has_valid_structure("Unutmam") is True  # Turkish but valid structure
+        assert tokenizer.has_valid_structure("beautiful") is True  # English but valid structure
+        assert tokenizer.has_valid_structure("xyzqwerty") is True  # Gibberish but valid structure
+        assert tokenizer.has_valid_structure("äöü") is True  # German umlauts
+        assert tokenizer.has_valid_structure("Größe") is True  # Contains ß
 
     def test_returns_false_for_too_short(self):
         """Should return False for words shorter than 2 characters."""
         tokenizer = Tokenizer()
-        assert tokenizer.is_german("a") is False
-        assert tokenizer.is_german("") is False
+        assert tokenizer.has_valid_structure("a") is False
+        assert tokenizer.has_valid_structure("") is False
 
     def test_returns_false_for_non_alphabetic(self):
         """Should return False for words with non-alphabetic characters."""
         tokenizer = Tokenizer()
-        assert tokenizer.is_german("word123") is False
-        assert tokenizer.is_german("hello-world") is False
-        assert tokenizer.is_german("test@email") is False
-        assert tokenizer.is_german("word.") is False
+        assert tokenizer.has_valid_structure("word123") is False
+        assert tokenizer.has_valid_structure("hello-world") is False
+        assert tokenizer.has_valid_structure("test@email") is False
+        assert tokenizer.has_valid_structure("word.") is False
 
 
-class TestTokenizeFiltersNonGerman:
-    """Tests for filtering non-German words in tokenize."""
+class TestTokenizeFiltersInvalidStructure:
+    """Tests for filtering words with invalid structure in tokenize."""
 
-    def test_tokenize_skips_non_german_words(self):
-        """Should skip non-German words during tokenization."""
+    def test_tokenize_skips_lemmas_with_invalid_structure(self):
+        """Should skip tokens whose lemma has invalid structure.
+
+        This tests the real has_valid_structure method (not mocked) to ensure
+        line 430 coverage when a token's lemma fails structural validation.
+        """
         from unittest.mock import MagicMock, patch
 
         with patch("spacy.load") as mock_load:
-            # Create mock tokens - one German, one non-German
-            mock_german_token = MagicMock()
-            mock_german_token.text = "Haus"
-            mock_german_token.lemma_ = "Haus"
-            mock_german_token.pos_ = "NOUN"
-            mock_german_token.is_alpha = True
-            mock_german_token.like_num = False
+            # Create mock tokens - one valid, one with invalid lemma
+            mock_valid_token = MagicMock()
+            mock_valid_token.text = "Haus"
+            mock_valid_token.lemma_ = "Haus"
+            mock_valid_token.pos_ = "NOUN"
+            mock_valid_token.is_alpha = True
+            mock_valid_token.like_num = False
 
-            mock_foreign_token = MagicMock()
-            mock_foreign_token.text = "beautiful"
-            mock_foreign_token.lemma_ = "beautiful"
-            mock_foreign_token.pos_ = "ADJ"
-            mock_foreign_token.is_alpha = True
-            mock_foreign_token.like_num = False
+            # Token with text >= 2 chars but lemma is single char (edge case)
+            mock_invalid_lemma_token = MagicMock()
+            mock_invalid_lemma_token.text = "ab"  # Valid text length
+            mock_invalid_lemma_token.lemma_ = "a"  # Invalid lemma (< 2 chars)
+            mock_invalid_lemma_token.pos_ = "ADJ"
+            mock_invalid_lemma_token.is_alpha = True
+            mock_invalid_lemma_token.like_num = False
 
             # Create mock sentence
             mock_sent = MagicMock()
-            mock_sent.text = "Haus beautiful"
-            mock_sent.__iter__ = lambda self: iter([mock_german_token, mock_foreign_token])
-            mock_german_token.sent = mock_sent
-            mock_foreign_token.sent = mock_sent
+            mock_sent.text = "Haus ab"
+            mock_sent.__iter__ = lambda self: iter([mock_valid_token, mock_invalid_lemma_token])
+            mock_valid_token.sent = mock_sent
+            mock_invalid_lemma_token.sent = mock_sent
 
             mock_doc = MagicMock()
             mock_doc.sents = [mock_sent]
@@ -926,11 +930,10 @@ class TestTokenizeFiltersNonGerman:
 
             tokenizer = Tokenizer()
             tokenizer._nlp = mock_nlp
-            # Mock is_german to return True for German, False for non-German
-            tokenizer.is_german = MagicMock(side_effect=lambda w: w == "Haus")
+            # Don't mock has_valid_structure - use the real method
 
-            tokens = tokenizer.tokenize("Haus beautiful")
+            tokens = tokenizer.tokenize("Haus ab")
 
-            # Should only include German word
+            # Should only include token with valid lemma structure
             assert len(tokens) == 1
             assert tokens[0].lemma == "Haus"

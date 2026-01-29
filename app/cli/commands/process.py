@@ -165,10 +165,27 @@ async def _process_file(file_path: Path, skip_enrichment: bool) -> None:
 
             # Step 5: Create Word records for new tokens
             new_words_created = 0
+            skipped_invalid = 0
             if enrichments:
                 with create_simple_progress() as progress:
                     task = progress.add_task("Creating word records...")
                     for token, enrichment in enrichments:
+                        # Skip words flagged as not valid German or proper nouns
+                        if enrichment and enrichment.is_not_valid_german:
+                            logger.info(
+                                "Skipping '%s': LLM flagged as not a valid German word",
+                                token.lemma,
+                            )
+                            skipped_invalid += 1
+                            continue
+                        if enrichment and enrichment.is_proper_noun:
+                            logger.info(
+                                "Skipping '%s': LLM flagged as proper noun",
+                                token.lemma,
+                            )
+                            skipped_invalid += 1
+                            continue
+
                         word = Word(
                             lemma=token.lemma,
                             pos=token.pos,
@@ -207,6 +224,8 @@ async def _process_file(file_path: Path, skip_enrichment: bool) -> None:
         console.print("[success]Processing complete![/]")
         console.print(f"  New words: [green]{new_words_created}[/]")
         console.print(f"  Duplicates: [dim]{duplicates}[/]")
+        if skipped_invalid:
+            console.print(f"  Skipped (invalid/proper noun): [yellow]{skipped_invalid}[/]")
         if errors:
             console.print(f"  Enrichment errors: [yellow]{errors}[/]")
         console.print()

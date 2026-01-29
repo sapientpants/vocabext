@@ -134,6 +134,30 @@ async def apply_enrichment_to_word(
 
     Returns: 'modified', 'deleted', or 'skipped'
     """
+    # Check if LLM flagged word as not valid German - DELETE
+    if enrichment.is_not_valid_german:
+        await record_event(
+            session,
+            word,
+            "DELETED",
+            "validate",
+            "LLM flagged as not a valid German word",
+        )
+        await session.delete(word)
+        return "deleted"
+
+    # Check if LLM flagged word as proper noun - DELETE
+    if enrichment.is_proper_noun:
+        await record_event(
+            session,
+            word,
+            "DELETED",
+            "validate",
+            "LLM flagged as proper noun (name/place/brand)",
+        )
+        await session.delete(word)
+        return "deleted"
+
     # Check for duplicate lemma - DELETE the word if it would create a duplicate
     if enrichment.lemma and enrichment.lemma != word.lemma:
         if await check_duplicate_lemma(session, enrichment.lemma, word.pos, word.id):
@@ -325,8 +349,11 @@ def add_word(
     run_async(_add_word(word, context))
 
 
-def _is_valid_german_word(word: str) -> tuple[bool, str | None]:
-    """Check if word passes basic validation rules.
+def _has_valid_structure(word: str) -> tuple[bool, str | None]:
+    """Check if word has valid structure for vocabulary.
+
+    This is structural validation only (length, alphabetic chars).
+    It does NOT perform language detection.
 
     Returns:
         Tuple of (is_valid, error_reason). If valid, error_reason is None.
@@ -349,8 +376,8 @@ async def _add_word(word: str, context: str) -> None:
         error_console.print("[error]Word cannot be empty[/]")
         raise typer.Exit(1)
 
-    # Validate word passes basic checks
-    is_valid, error_reason = _is_valid_german_word(word)
+    # Validate word has valid structure
+    is_valid, error_reason = _has_valid_structure(word)
     if not is_valid:
         error_console.print(f"[error]Invalid word: {error_reason}[/]")
         raise typer.Exit(1)
@@ -398,6 +425,17 @@ async def _add_word(word: str, context: str) -> None:
 
         if not enrichment:
             error_console.print("[error]Enrichment returned no result[/]")
+            raise typer.Exit(1)
+
+        # Check if LLM flagged word as invalid or proper noun
+        if enrichment.is_not_valid_german:
+            error_console.print(f"[error]'{word}' is not a valid German word (skipping)[/]")
+            raise typer.Exit(1)
+
+        if enrichment.is_proper_noun:
+            error_console.print(
+                f"[error]'{word}' is a proper noun (name/place/brand) and cannot be added[/]"
+            )
             raise typer.Exit(1)
 
         # Check for duplicate
@@ -529,17 +567,17 @@ async def _validate_words(
         # Track details for dry-run summary
         would_delete: list[tuple[Word, str]] = []
 
-        def validate_word_basic(word: Word) -> str | None:
-            """Check basic validation rules. Returns error reason or None if valid."""
-            is_valid, error_reason = _is_valid_german_word(word.lemma)
+        def validate_word_structure(word: Word) -> str | None:
+            """Check structural validation rules. Returns error reason or None if valid."""
+            is_valid, error_reason = _has_valid_structure(word.lemma)
             return error_reason if not is_valid else None
 
         # Step 1: Basic validation (alphabetic check)
         valid_words: list[Word] = []
         with create_simple_progress() as progress:
-            task_id = progress.add_task("Checking format...", total=len(words))
+            task_id = progress.add_task("Checking structure...", total=len(words))
             for word in words:
-                validation_error = validate_word_basic(word)
+                validation_error = validate_word_structure(word)
                 if validation_error:
                     if dry_run:
                         would_delete.append((word, validation_error))

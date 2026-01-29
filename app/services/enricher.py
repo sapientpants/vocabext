@@ -44,6 +44,12 @@ class NounResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    is_not_valid_german: bool = Field(
+        description="True if the word is not a valid German word (foreign, gibberish, misspelled)"
+    )
+    is_proper_noun: bool = Field(
+        description="True if the word is a proper noun (name, place, brand, etc.)"
+    )
     lemma: str = Field(description="Correct base form (singular, nominative)")
     gender: Literal["der", "die", "das"] = Field(description="Article for singular form")
     plural: str = Field(description="Plural form without article")
@@ -55,6 +61,12 @@ class VerbResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    is_not_valid_german: bool = Field(
+        description="True if the word is not a valid German word (foreign, gibberish, misspelled)"
+    )
+    is_proper_noun: bool = Field(
+        description="True if this word is actually a proper noun (name, place, brand) misclassified as a verb"
+    )
     lemma: str = Field(description="Correct infinitive form")
     preterite: str = Field(description="3rd person singular preterite")
     past_participle: str = Field(description="Past participle without auxiliary")
@@ -67,6 +79,12 @@ class PrepositionResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    is_not_valid_german: bool = Field(
+        description="True if the word is not a valid German word (foreign, gibberish, misspelled)"
+    )
+    is_proper_noun: bool = Field(
+        description="True if this word is actually a proper noun (name, place, brand) misclassified"
+    )
     lemma: str = Field(description="Correct preposition form")
     cases: list[Literal["akkusativ", "dativ", "genitiv"]] = Field(
         description="Grammatical cases this preposition governs"
@@ -79,6 +97,12 @@ class WordResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    is_not_valid_german: bool = Field(
+        description="True if the word is not a valid German word (foreign, gibberish, misspelled)"
+    )
+    is_proper_noun: bool = Field(
+        description="True if this word is actually a proper noun (name, place, brand) misclassified"
+    )
     lemma: str = Field(description="Correct base/dictionary form")
     translations: list[str] = Field(description="1-3 English translations")
 
@@ -114,6 +138,10 @@ class EnrichmentResult(BaseModel):
     cases: list[str] = Field(default_factory=list)  # akkusativ/dativ/genitiv for prepositions
     translations: list[str] = Field(default_factory=list)
     error: str | None = None  # Error message if enrichment failed
+
+    # Validation flags from LLM
+    is_not_valid_german: bool = False  # True if word is not a valid German word
+    is_proper_noun: bool = False  # True if word is a proper noun (name, place, brand)
 
     # Dictionary-grounded fields
     definition_de: str | None = None  # German definition
@@ -242,10 +270,17 @@ class Enricher:
 
     def _build_prompt(self, lemma: str, pos: str) -> str:
         """Build the prompt for LLM enrichment based on part of speech."""
+        validation_instructions = """
+IMPORTANT: First check if this is a valid German vocabulary word:
+- Set is_not_valid_german=true ONLY if: foreign word (English, etc.), gibberish, severely misspelled, or not a real German word in ANY part of speech. If the word exists as a valid German word in a different POS (e.g., "Gut" is a noun even if asked about as adjective), set this to false.
+- Set is_proper_noun=true if: a name (person, company, brand), place name, or other proper noun
+If either flag is true, still provide your best guess for the other fields."""
+
         if pos == "NOUN":
             return f"""Analyze this German noun and provide grammatical information.
 
 Word: {lemma}
+{validation_instructions}
 
 Provide:
 - Gender (der/die/das)
@@ -256,6 +291,7 @@ Provide:
             return f"""Analyze this German verb and provide grammatical information.
 
 Word: {lemma}
+{validation_instructions}
 
 Provide:
 - Preterite (3rd person singular)
@@ -267,6 +303,7 @@ Provide:
             return f"""Analyze this German preposition and provide grammatical information.
 
 Word: {lemma}
+{validation_instructions}
 
 Provide:
 - Cases: which grammatical cases this preposition governs (akkusativ, dativ, and/or genitiv)
@@ -277,6 +314,7 @@ Provide:
 
 Word: {lemma}
 Part of speech: {pos}
+{validation_instructions}
 
 Provide 1-3 English translations."""
 
@@ -353,6 +391,8 @@ Provide 1-3 English translations."""
         result = EnrichmentResult(
             lemma=lemma,
             translations=data.get("translations", []),
+            is_not_valid_german=data.get("is_not_valid_german", False),
+            is_proper_noun=data.get("is_proper_noun", False),
         )
 
         if pos == "NOUN":

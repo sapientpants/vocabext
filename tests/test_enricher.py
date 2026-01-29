@@ -83,6 +83,8 @@ class TestEnrichmentResult:
         assert result.translations == []
         assert result.error is None
         assert result.synonyms == []
+        assert result.is_not_valid_german is False
+        assert result.is_proper_noun is False
 
     def test_with_noun_fields(self):
         """Should accept noun fields."""
@@ -268,6 +270,8 @@ class TestEnricherEnrich:
         """Should enrich noun successfully."""
         enricher = Enricher()
         mock_data = {
+            "is_not_valid_german": False,
+            "is_proper_noun": False,
             "lemma": "der Hund",
             "gender": "der",
             "plural": "Hunde",
@@ -282,12 +286,16 @@ class TestEnricherEnrich:
         assert result.plural == "Hunde"
         assert result.translations == ["dog", "hound"]
         assert result.error is None
+        assert result.is_not_valid_german is False
+        assert result.is_proper_noun is False
 
     @pytest.mark.asyncio
     async def test_enrich_verb_success(self):
         """Should enrich verb successfully."""
         enricher = Enricher()
         mock_data = {
+            "is_not_valid_german": False,
+            "is_proper_noun": False,
             "lemma": "gehen",
             "preterite": "ging",
             "past_participle": "gegangen",
@@ -309,6 +317,8 @@ class TestEnricherEnrich:
         """Should enrich adjective successfully."""
         enricher = Enricher()
         mock_data = {
+            "is_not_valid_german": False,
+            "is_proper_noun": False,
             "lemma": "schnell",
             "translations": ["fast", "quick"],
         }
@@ -465,6 +475,34 @@ class TestEnricherBuildResult:
         data = {"translations": ["word"]}
         result = enricher._build_result(data, "ADJ")
         assert result.lemma is None
+
+    def test_build_result_validation_flags(self):
+        """Should extract validation flags."""
+        enricher = Enricher()
+        data = {
+            "is_not_valid_german": True,
+            "is_proper_noun": False,
+            "lemma": "foreign",
+            "translations": ["foreign"],
+        }
+        result = enricher._build_result(data, "ADJ")
+        assert result.is_not_valid_german is True
+        assert result.is_proper_noun is False
+
+    def test_build_result_proper_noun_flag(self):
+        """Should extract proper noun flag."""
+        enricher = Enricher()
+        data = {
+            "is_not_valid_german": False,
+            "is_proper_noun": True,
+            "lemma": "Berlin",
+            "gender": "das",
+            "plural": "Berlin",
+            "translations": ["Berlin"],
+        }
+        result = enricher._build_result(data, "NOUN")
+        assert result.is_not_valid_german is False
+        assert result.is_proper_noun is True
 
 
 class TestEnricherValidateLemma:
