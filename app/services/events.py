@@ -41,6 +41,7 @@ async def record_event(
         preterite=word.preterite,
         past_participle=word.past_participle,
         auxiliary=word.auxiliary,
+        cases=word.cases,
         translations=word.translations,
         definition_de=word.definition_de,
         synonyms=word.synonyms,
@@ -157,6 +158,7 @@ async def revert_to_event(
             preterite=event.preterite,
             past_participle=event.past_participle,
             auxiliary=event.auxiliary,
+            cases=event.cases,
             translations=event.translations,
             definition_de=event.definition_de,
             synonyms=event.synonyms,
@@ -179,6 +181,7 @@ async def revert_to_event(
         word.preterite = event.preterite
         word.past_participle = event.past_participle
         word.auxiliary = event.auxiliary
+        word.cases = event.cases
         word.translations = event.translations
         word.definition_de = event.definition_de
         word.synonyms = event.synonyms

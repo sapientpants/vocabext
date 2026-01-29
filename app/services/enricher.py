@@ -579,9 +579,6 @@ Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-,
 
             elif pos == "ADP":
                 # Copy preposition cases from LLM result
-                # Note: cases are not currently persisted to the database (Word model
-                # doesn't have a cases column). They are included in EnrichmentResult
-                # for potential future use or display purposes.
                 result.cases = llm_result.cases
 
             # Note: We intentionally do NOT use LLM lemma corrections here.
