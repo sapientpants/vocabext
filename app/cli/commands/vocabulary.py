@@ -156,6 +156,7 @@ async def apply_enrichment_to_word(
         "preterite": word.preterite,
         "past_participle": word.past_participle,
         "auxiliary": word.auxiliary,
+        "cases": word.cases,
         "translations": word.translations,
         "lemma_source": word.lemma_source,
         "frequency": word.frequency,
@@ -178,6 +179,8 @@ async def apply_enrichment_to_word(
         word.past_participle = enrichment.past_participle
     if enrichment.auxiliary:
         word.auxiliary = enrichment.auxiliary
+    if enrichment.cases:
+        word.cases = json.dumps(enrichment.cases)
     if enrichment.translations:
         word.translations = json.dumps(enrichment.translations)
 
@@ -203,6 +206,7 @@ async def apply_enrichment_to_word(
         "preterite": word.preterite,
         "past_participle": word.past_participle,
         "auxiliary": word.auxiliary,
+        "cases": word.cases,
         "translations": word.translations,
         "lemma_source": word.lemma_source,
         "frequency": word.frequency,
@@ -226,6 +230,7 @@ async def apply_enrichment_to_word(
             preterite=old_values["preterite"],
             past_participle=old_values["past_participle"],
             auxiliary=old_values["auxiliary"],
+            cases=old_values["cases"],
             translations=old_values["translations"],
         )
         session.add(version)
@@ -414,8 +419,6 @@ async def _add_word(word: str, context: str) -> None:
             raise typer.Exit(1)
 
         # Create Word record
-        # Note: enrichment.cases (for prepositions) is intentionally not persisted
-        # as the Word model doesn't have a cases column.
         needs_review = bool(enrichment.error)
         review_reason = enrichment.error if enrichment.error else None
 
@@ -427,6 +430,7 @@ async def _add_word(word: str, context: str) -> None:
             preterite=enrichment.preterite,
             past_participle=enrichment.past_participle,
             auxiliary=enrichment.auxiliary,
+            cases=json.dumps(enrichment.cases) if enrichment.cases else None,
             translations=json.dumps(enrichment.translations) if enrichment.translations else None,
             definition_de=enrichment.definition_de,
             synonyms=json.dumps(enrichment.synonyms) if enrichment.synonyms else None,

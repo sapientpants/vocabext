@@ -35,6 +35,7 @@ class Word(Base):
     preterite: Mapped[str | None] = mapped_column(Text, nullable=True)  # verbs only
     past_participle: Mapped[str | None] = mapped_column(Text, nullable=True)  # verbs only
     auxiliary: Mapped[str | None] = mapped_column(Text, nullable=True)  # haben/sein (verbs only)
+    cases: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array (prepositions only)
     translations: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
 
     # Dictionary-grounded fields
@@ -66,6 +67,22 @@ class Word(Base):
         self.translations = json.dumps(value)
 
     @property
+    def cases_list(self) -> list[str]:
+        """Get cases as a Python list (for prepositions)."""
+        if not self.cases:
+            return []
+        try:
+            result: Any = json.loads(self.cases)
+            return cast(list[str], result)
+        except json.JSONDecodeError:
+            return []
+
+    @cases_list.setter
+    def cases_list(self, value: list[str]) -> None:
+        """Set cases from a Python list."""
+        self.cases = json.dumps(value)
+
+    @property
     def display_word(self) -> str:
         """Get word with article for nouns."""
         if self.pos == "NOUN" and self.gender:
@@ -83,6 +100,8 @@ class Word(Base):
         if self.past_participle:
             aux = self.auxiliary or "haben"
             parts.append(f"pp: {aux} {self.past_participle}")
+        if self.cases_list:
+            parts.append(f"+ {', '.join(self.cases_list)}")
         return ", ".join(parts)
 
     @property
@@ -135,6 +154,7 @@ class WordVersion(Base):
     preterite: Mapped[str | None] = mapped_column(Text, nullable=True)
     past_participle: Mapped[str | None] = mapped_column(Text, nullable=True)
     auxiliary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cases: Mapped[str | None] = mapped_column(Text, nullable=True)
     translations: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Dictionary-grounded fields (snapshot)
@@ -199,6 +219,7 @@ class WordEvent(Base):
     preterite: Mapped[str | None] = mapped_column(Text, nullable=True)
     past_participle: Mapped[str | None] = mapped_column(Text, nullable=True)
     auxiliary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cases: Mapped[str | None] = mapped_column(Text, nullable=True)
     translations: Mapped[str | None] = mapped_column(Text, nullable=True)
     definition_de: Mapped[str | None] = mapped_column(Text, nullable=True)
     synonyms: Mapped[str | None] = mapped_column(Text, nullable=True)

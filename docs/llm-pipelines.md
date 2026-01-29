@@ -283,7 +283,7 @@ class VerbResponse(BaseModel):
 class PrepositionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     lemma: str
-    cases: list[Literal["akkusativ", "dativ", "genitiv"]]
+    cases: list[Literal["akkusativ", "dativ", "genitiv"]]  # Persisted to Word.cases
     translations: list[str]
 ```
 

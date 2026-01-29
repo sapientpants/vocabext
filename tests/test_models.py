@@ -130,6 +130,41 @@ class TestWord:
         word = Word(lemma="test", pos="NOUN", anki_note_id=None)
         assert word.is_synced is False
 
+    def test_cases_list_getter(self):
+        """Should parse JSON cases to list for prepositions."""
+        word = Word(
+            lemma="mit",
+            pos="ADP",
+            cases='["dativ"]',
+        )
+        assert word.cases_list == ["dativ"]
+
+    def test_cases_list_getter_empty(self):
+        """Should return empty list when no cases."""
+        word = Word(lemma="mit", pos="ADP", cases=None)
+        assert word.cases_list == []
+
+    def test_cases_list_getter_invalid_json(self):
+        """Should return empty list for invalid JSON."""
+        word = Word(lemma="mit", pos="ADP", cases="not json")
+        assert word.cases_list == []
+
+    def test_cases_list_setter(self):
+        """Should serialize cases list to JSON."""
+        word = Word(lemma="mit", pos="ADP")
+        word.cases_list = ["dativ", "akkusativ"]
+        assert word.cases == '["dativ", "akkusativ"]'
+
+    def test_grammar_info_preposition(self):
+        """Should format case info for prepositions."""
+        word = Word(lemma="mit", pos="ADP", cases='["dativ"]')
+        assert word.grammar_info == "+ dativ"
+
+    def test_grammar_info_preposition_multiple_cases(self):
+        """Should format multiple cases for two-way prepositions."""
+        word = Word(lemma="in", pos="ADP", cases='["akkusativ", "dativ"]')
+        assert word.grammar_info == "+ akkusativ, dativ"
+
 
 class TestWordVersionTranslationsList:
     """Tests for WordVersion.translations_list property."""

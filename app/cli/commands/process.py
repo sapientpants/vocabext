@@ -169,9 +169,6 @@ async def _process_file(file_path: Path, skip_enrichment: bool) -> None:
                 with create_simple_progress() as progress:
                     task = progress.add_task("Creating word records...")
                     for token, enrichment in enrichments:
-                        # Note: enrichment.cases (for prepositions) is intentionally not
-                        # persisted as the Word model doesn't have a cases column.
-                        # Cases are available in EnrichmentResult for display/future use.
                         word = Word(
                             lemma=token.lemma,
                             pos=token.pos,
@@ -180,6 +177,9 @@ async def _process_file(file_path: Path, skip_enrichment: bool) -> None:
                             preterite=enrichment.preterite if enrichment else None,
                             past_participle=enrichment.past_participle if enrichment else None,
                             auxiliary=enrichment.auxiliary if enrichment else None,
+                            cases=json.dumps(enrichment.cases)
+                            if enrichment and enrichment.cases
+                            else None,
                             translations=json.dumps(enrichment.translations)
                             if enrichment and enrichment.translations
                             else None,
