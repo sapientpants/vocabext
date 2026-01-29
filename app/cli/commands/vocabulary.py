@@ -369,10 +369,6 @@ async def _add_word(word: str, context: str) -> None:
             task = progress.add_task("Analyzing word...")
 
             try:
-                # Check if word is German before processing
-                if not tokenizer.is_german(word):
-                    raise ValueError(f"'{word}' does not appear to be a German word")
-
                 # Use spaCy for POS detection (same pipeline as document processing)
                 token_info = tokenizer.analyze_word(word, context)
                 if token_info is None:
@@ -385,7 +381,8 @@ async def _add_word(word: str, context: str) -> None:
                 lemma = token_info.lemma
                 progress.update(task, description=f"[dim]Detected: {pos}[/] Enriching...")
 
-                # Dictionary validation + LLM enrichment (same as process file)
+                # Dictionary validation (spaCy) + single LLM call for enrichment
+                # Same pipeline as process file - see docs/llm-pipelines.md
                 enrichment = await enricher.enrich_with_dictionary(lemma, pos, context, session)
                 progress.update(task, description=f"[green]Complete: {pos}[/]")
             except Exception as e:
@@ -398,10 +395,7 @@ async def _add_word(word: str, context: str) -> None:
             error_console.print("[error]Enrichment returned no result[/]")
             raise typer.Exit(1)
 
-        # Use the lemma from spaCy analysis (enrichment.lemma is LLM's version, not authoritative)
-        # This matches the process file pipeline where spaCy determines the lemma
-
-        # Step 2: Check for duplicate
+        # Check for duplicate
         # Include gender for nouns to align with database unique constraint on (lemma, pos, gender)
         conditions = [Word.lemma == lemma, Word.pos == pos]
         if pos == "NOUN" and enrichment.gender is not None:
@@ -419,7 +413,9 @@ async def _add_word(word: str, context: str) -> None:
                 console.print(f"[dim]Translations: {', '.join(existing.translations_list)}[/]")
             raise typer.Exit(1)
 
-        # Step 3: Create Word record
+        # Create Word record
+        # Note: enrichment.cases (for prepositions) is intentionally not persisted
+        # as the Word model doesn't have a cases column.
         needs_review = bool(enrichment.error)
         review_reason = enrichment.error if enrichment.error else None
 
@@ -620,7 +616,7 @@ async def _validate_words(
                 console.print(f"[success]Complete![/] Deleted: {deleted}, No valid words to enrich")
             return
 
-        # Step 2: Enrich remaining valid words (only if not dry-run)
+        # Step 3: Enrich remaining valid words (only if not dry-run)
         modified, skipped, enrichment_deleted, errors = 0, 0, 0, 0
 
         async def enrich_word(word: Word) -> tuple[Word, EnrichmentResult | Exception]:

@@ -199,7 +199,7 @@ sequenceDiagram
     loop Max 3 retries
         llm->>Client: responses.create()
 
-        Note over Client,API: model: gpt-5-mini, input: prompt, text.format: json_schema
+        Note over Client,API: model: gpt-5-mini, input: prompt, response_format: json_schema
 
         alt Success
             API-->>Client: Response with output_text
@@ -356,11 +356,12 @@ flowchart LR
 ```mermaid
 flowchart LR
     subgraph LLM["LLM API (Single Call)"]
-        A[Word + POS + Context] --> B[Unified Enrichment]
+        A[Word + POS] --> B[Unified Enrichment]
         B --> C[Translations]
         B --> D[Gender if NOUN]
         B --> E[Plural if NOUN]
         B --> F[Conjugations if VERB]
+        B --> G[Cases if ADP]
     end
 ```
 

@@ -494,7 +494,7 @@ Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-,
         Args:
             lemma: The word lemma to enrich
             pos: Part of speech (NOUN, VERB, ADJ, ADV, ADP)
-            context: Context sentence for better LLM results
+            context: Context sentence (currently unused, reserved for future use)
             session: Database session for dictionary caching
 
         Returns:
@@ -577,6 +577,13 @@ Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-,
                 result.past_participle = llm_result.past_participle
                 result.auxiliary = llm_result.auxiliary
 
+            elif pos == "ADP":
+                # Copy preposition cases from LLM result
+                # Note: cases are not currently persisted to the database (Word model
+                # doesn't have a cases column). They are included in EnrichmentResult
+                # for potential future use or display purposes.
+                result.cases = llm_result.cases
+
             # Note: We intentionally do NOT use LLM lemma corrections here.
             # Local dictionary (spaCy) is the source of truth for lemma validation.
             # LLM corrections were non-deterministic and caused idempotency issues.
@@ -590,10 +597,14 @@ Keep all prefixes (Ab-, An-, Auf-, Aus-, Be-, Ein-, Er-, Ent-, Ver-, Vor-, Zer-,
 
     async def detect_pos(self, word: str, context: str = "") -> tuple[str, str]:
         """
-        Detect part of speech and normalize lemma for a German word.
+        Detect part of speech and normalize lemma for a German word using LLM.
 
-        Uses LLM to determine the most likely POS for the word, which is more
-        reliable than spaCy for isolated words without context.
+        Note: This is a legacy/alternative method that uses an LLM call for POS
+        detection. The preferred approach is to use Tokenizer.analyze_word()
+        which performs POS detection locally via spaCy (faster, free, offline).
+
+        This method is kept for cases where LLM-based detection might be preferred,
+        such as when spaCy's accuracy is insufficient for certain edge cases.
 
         Args:
             word: The German word to analyze

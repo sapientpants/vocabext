@@ -145,22 +145,32 @@ class Tokenizer:
         self._nlp: Any = None
 
     def is_german(self, word: str) -> bool:
-        """Check if a word appears to be German.
+        """Check if a word passes basic German word validity checks.
 
-        Note: This method always returns True because reliable single-word
-        language detection is not feasible for German:
+        This performs structural validation to ensure the word consists of
+        valid alphabetic characters (including German-specific letters like
+        ä, ö, ü, ß) and is long enough to be meaningful.
+
+        Note: This is NOT full language detection. Reliable single-word
+        language detection is not feasible for German because:
         - langdetect is unreliable for single words
         - spaCy vocabulary doesn't contain compound words (very common in German)
 
-        The alphabetic-only check in _is_valid_german_word() is sufficient
-        to filter out obviously invalid entries.
+        For actual non-German word detection, use the LLM-based
+        filter_non_german_words() batch function in enricher.py.
 
         Args:
             word: The word to check
 
         Returns:
-            Always True - language validation is not reliable for single words
+            True if word passes basic validity checks, False otherwise
         """
+        # Must be at least 2 characters
+        if len(word) < 2:
+            return False
+        # Must contain only alphabetic characters (including German umlauts and ß)
+        if not word.isalpha():
+            return False
         return True
 
     def _looks_like_participle(self, word: str) -> bool:
@@ -488,8 +498,8 @@ class Tokenizer:
             context: Optional context sentence for better POS detection
 
         Returns:
-            TokenInfo with pos and lemma, or None if word cannot be analyzed
-            (e.g., proper nouns or non-German words are rejected)
+            TokenInfo with pos and lemma, or None if the word is rejected
+            (proper nouns, non-German words, or invalid input)
         """
         # Check if word is German before processing
         if not self.is_german(word):
@@ -562,8 +572,9 @@ class Tokenizer:
         if best_match is None and context and not is_proper_noun:
             return self.analyze_word(word, "")
 
-        # If detected as proper noun, return None (reject it)
-        if is_proper_noun and best_match is None:
+        # If detected as proper noun, return None (reject it),
+        # regardless of whether a non-proper-noun match was also found
+        if is_proper_noun:
             return None
 
         # If still no match, default to NOUN (most common for unknown words)

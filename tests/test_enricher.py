@@ -922,6 +922,29 @@ class TestEnricherEnrichWithDictionary:
         assert result.gender is None
         assert result.preterite is None
 
+    @pytest.mark.asyncio
+    async def test_enrich_with_dictionary_preposition(self):
+        """Should handle preposition enrichment with cases."""
+        mock_dict = MagicMock()
+        mock_dict.validate_and_ground_lemma = AsyncMock(return_value=("mit", True, "spacy"))
+        mock_dict.get_enrichment_data = AsyncMock(return_value=None)
+
+        enricher = Enricher(dictionary_service=mock_dict)
+        enricher._dictionary_enabled = True
+
+        with patch.object(enricher, "enrich", new_callable=AsyncMock) as mock_enrich:
+            mock_enrich.return_value = EnrichmentResult(
+                lemma="mit",
+                cases=["dativ"],
+                translations=["with"],
+            )
+            result = await enricher.enrich_with_dictionary("mit", "ADP", "context")
+
+        # ADP gets cases from LLM
+        assert result.lemma == "mit"
+        assert result.cases == ["dativ"]
+        assert result.translations == ["with"]
+
 
 class TestEnricherDetectPos:
     """Tests for Enricher.detect_pos method."""

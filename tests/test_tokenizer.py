@@ -605,7 +605,7 @@ class TestAnalyzeWord:
 
         tokenizer = Tokenizer()
         tokenizer._nlp = mock_nlp
-        # Mock is_german to avoid langdetect issues in tests
+        # Mock is_german so tests can control word validation behavior
         tokenizer.is_german = MagicMock(return_value=is_german)
         return tokenizer
 
@@ -855,20 +855,37 @@ class TestAnalyzeWord:
 class TestIsGerman:
     """Tests for the is_german method.
 
-    Note: is_german always returns True because reliable single-word
+    Note: is_german performs basic structural validation (alphabetic, min length)
+    but does NOT perform full language detection because reliable single-word
     language detection is not feasible for German (compound words not in vocab,
-    langdetect unreliable for single words).
+    langdetect unreliable for single words). For actual non-German word detection,
+    use the LLM-based filter_non_german_words() batch function in enricher.py.
     """
 
-    def test_always_returns_true(self):
-        """Should always return True - language validation disabled."""
+    def test_returns_true_for_valid_words(self):
+        """Should return True for valid-looking words (alphabetic, min 2 chars)."""
         tokenizer = Tokenizer()
-        # All words return True since language detection is unreliable
         assert tokenizer.is_german("Haus") is True
         assert tokenizer.is_german("Arbeit") is True
-        assert tokenizer.is_german("Unutmam") is True  # Turkish - still True
-        assert tokenizer.is_german("beautiful") is True  # English - still True
-        assert tokenizer.is_german("xyzqwerty") is True  # Gibberish - still True
+        assert tokenizer.is_german("Unutmam") is True  # Turkish but looks valid
+        assert tokenizer.is_german("beautiful") is True  # English but looks valid
+        assert tokenizer.is_german("xyzqwerty") is True  # Gibberish but looks valid
+        assert tokenizer.is_german("äöü") is True  # German umlauts
+        assert tokenizer.is_german("Größe") is True  # Contains ß
+
+    def test_returns_false_for_too_short(self):
+        """Should return False for words shorter than 2 characters."""
+        tokenizer = Tokenizer()
+        assert tokenizer.is_german("a") is False
+        assert tokenizer.is_german("") is False
+
+    def test_returns_false_for_non_alphabetic(self):
+        """Should return False for words with non-alphabetic characters."""
+        tokenizer = Tokenizer()
+        assert tokenizer.is_german("word123") is False
+        assert tokenizer.is_german("hello-world") is False
+        assert tokenizer.is_german("test@email") is False
+        assert tokenizer.is_german("word.") is False
 
 
 class TestTokenizeFiltersNonGerman:
